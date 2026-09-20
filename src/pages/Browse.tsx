@@ -42,7 +42,6 @@ import {
   RotateCw,
   Search,
   Settings as SettingsIcon,
-  ShieldAlert,
   ShieldCheck,
   Star,
   Sun,
@@ -128,6 +127,12 @@ interface Tab {
 const URL_RE = /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i;
 const ETH_RE = /^[a-z0-9-]+\.eth$/i;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+/** HTTP-actions host for the embeddable page proxy. */
+const CONVEX_SITE_URL = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
+  ".convex.cloud",
+  ".convex.site",
+);
 
 function shorten(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -1485,66 +1490,93 @@ function SettingsPage({
 /* ------------------------------- site view ------------------------------- */
 
 function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
-  const [blocked, setBlocked] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const [showChip, setShowChip] = useState(true);
   const [attempt, setAttempt] = useState(0);
 
+  // Pages are fetched through Freman's own proxy, which strips
+  // X-Frame-Options / CSP frame-ancestors — so sites can't refuse to load.
+  const proxiedSrc = `${CONVEX_SITE_URL}/fetchProxy?url=${encodeURIComponent(url)}`;
+
   useEffect(() => {
-    setBlocked(false);
-    const timer = setTimeout(() => setBlocked(true), 4000);
+    setLoaded(false);
+    setSlow(false);
+    setShowChip(true);
+    const timer = setTimeout(() => setSlow(true), 6000);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, attempt]);
 
-  if (blocked) {
-    return (
-      <div className="grid min-h-full place-items-center px-6 py-16">
-        <div className="max-w-md text-center">
-          <ShieldAlert className="mx-auto size-8 text-muted-foreground" />
-          <p className="mt-4 text-base font-medium">
-            This site can’t be embedded
-          </p>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {hostOf(url)} refuses to render inside another page
-            (X-Frame-Options). Freman opens it externally instead — everything
-            else keeps working right here.
-          </p>
-          <div className="mt-6 flex flex-wrap justify-center gap-2">
-            <Button asChild size="sm" className="rounded-full px-5">
-              <a href={url} target="_blank" rel="noopener noreferrer">
-                Open in a browser tab
-                <ExternalLink className="ml-1.5 size-3.5" />
-              </a>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-full px-5"
-              onClick={() => {
-                setBlocked(false);
-                setAttempt((a) => a + 1);
+  return (
+    <div className="relative h-full min-h-[60vh] w-full">
+      {!loaded && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+          <div className="flex flex-col items-center gap-3">
+            <img
+              src={faviconOf(url)}
+              alt=""
+              className="size-6 rounded opacity-60"
+              onError={(e) => {
+                e.currentTarget.style.visibility = "hidden";
               }}
-            >
-              Retry
-            </Button>
+            />
+            <p className="font-mono text-xs text-muted-foreground">
+              Loading {hostOf(url)}…
+            </p>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <iframe
-      key={`${url}-${attempt}`}
-      src={url}
-      title={hostOf(url)}
-      className="h-full min-h-[60vh] w-full border-0 bg-background"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-      referrerPolicy="no-referrer-when-downgrade"
-      onLoad={() => {
-        setBlocked(false);
-        onLoaded();
-      }}
-    />
+      )}
+      <iframe
+        key={`${url}-${attempt}`}
+        src={proxiedSrc}
+        title={hostOf(url)}
+        className={`h-full min-h-[60vh] w-full border-0 bg-background transition-opacity ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer-when-downgrade"
+        onLoad={() => {
+          setLoaded(true);
+          onLoaded();
+        }}
+      />
+      {loaded && showChip && (
+        <div className="absolute bottom-3 right-3 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+          <ShieldCheck className="size-3.5" />
+          <span className="hidden sm:inline">Opened through Freman’s proxy</span>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 transition-colors hover:text-foreground"
+          >
+            Open original
+            <ExternalLink className="size-3" />
+          </a>
+          <button
+            aria-label="Dismiss"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => setShowChip(false)}
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      )}
+      {slow && !loaded && (
+        <div className="absolute bottom-3 right-3 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+          Still loading — some sites are slow through the proxy.
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 transition-colors hover:text-foreground"
+          >
+            Open directly
+            <ExternalLink className="size-3" />
+          </a>
+        </div>
+      )}
+    </div>
   );
 }
 
