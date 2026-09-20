@@ -21,7 +21,7 @@ const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 function ThemeSync() {
   const { isAuthenticated } = useAuth();
   const settings = useQuery(api.settings.get);
-  const theme = isAuthenticated ? (settings?.theme ?? "light") : "light";
+  const theme = isAuthenticated ? (settings?.theme ?? "dark") : "dark";
 
   useEffect(() => {
     const root = document.documentElement;

@@ -942,7 +942,7 @@ export default function Browse() {
         {/* Page-load bar */}
         {showLoadingBar && (
           <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden">
-            <div className="freman-loading-bar h-full w-1/3 bg-foreground/70" />
+            <div className="freman-loading-bar h-full w-1/3" />
           </div>
         )}
       </div>
@@ -1066,7 +1066,7 @@ export default function Browse() {
       {/* ── Status bar (desktop) ──────────────────────────────────────── */}
       <div className="hidden items-center justify-between border-t border-border bg-card px-4 py-1 font-mono text-[11px] text-muted-foreground sm:flex">
         <span className="flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-emerald-500" />
+          <span className="size-1.5 rounded-full bg-red-500" />
           ETH · Mainnet
           <span className="text-border">|</span>
           Freman 1.0
@@ -1477,7 +1477,7 @@ function SettingsPage({
               </p>
             </div>
             <span className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1 font-mono text-[11px] text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span className="size-1.5 rounded-full bg-red-500" />
               Brave · live
             </span>
           </div>
@@ -1875,7 +1875,7 @@ function WalletPopover() {
                 Wallet Provider
               </p>
               <span className="flex items-center gap-1.5 text-[11px] text-foreground">
-                <span className="size-1.5 rounded-full bg-emerald-500" />
+                <span className="size-1.5 rounded-full bg-red-500" />
                 Live
               </span>
             </div>

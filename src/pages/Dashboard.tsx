@@ -119,7 +119,7 @@ function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void })
             freman://studio — current profile
           </span>
           <span className="ml-auto flex items-center gap-1.5 text-xs">
-            <span className="size-1.5 rounded-full bg-emerald-500" />
+            <span className="size-1.5 rounded-full bg-red-500" />
             Ready
           </span>
         </div>
@@ -444,7 +444,7 @@ function Web3Section() {
               >
                 <span
                   className={`size-1.5 shrink-0 rounded-full ${
-                    account.isPrimary ? "bg-emerald-500" : "bg-border"
+                    account.isPrimary ? "bg-red-500" : "bg-border"
                   }`}
                 />
                 <span className="text-sm font-medium">{account.label}</span>
@@ -530,7 +530,7 @@ function Web3Section() {
                   {connection ? (
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-2 text-xs">
-                        <span className="size-1.5 rounded-full bg-emerald-500" />
+                        <span className="size-1.5 rounded-full bg-red-500" />
                         <span className="text-muted-foreground">
                           {linkedAccount
                             ? `${linkedAccount.label} · ${shorten(linkedAccount.address)}`
@@ -667,7 +667,7 @@ function BuildsSection() {
               }`}
             >
               <span className="flex items-center gap-2 text-xs">
-                <span className="size-1.5 rounded-full bg-emerald-500" />
+                <span className="size-1.5 rounded-full bg-red-500" />
                 {build.status}
               </span>
               <span className="font-mono text-sm">{build.chromiumVersion}</span>

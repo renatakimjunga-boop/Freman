@@ -8,7 +8,7 @@ import { mutation, query } from "./_generated/server";
  */
 
 export const DEFAULTS = {
-  theme: "light" as const,
+  theme: "dark" as const,
   searchFilter: "all" as const,
   safeSearch: false,
   saveHistory: true,

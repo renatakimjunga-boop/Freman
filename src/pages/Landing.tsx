@@ -79,7 +79,7 @@ function BrowserMock() {
                 Wallet
               </span>
               <span className="flex items-center gap-1.5 text-[11px] text-foreground">
-                <span className="size-1.5 rounded-full bg-emerald-500" />
+                <span className="size-1.5 rounded-full bg-red-500" />
                 Connected
               </span>
             </div>
@@ -113,7 +113,7 @@ function WalletMock() {
       <div className="flex items-center justify-between">
         <Eyebrow>Primary account</Eyebrow>
         <span className="flex items-center gap-1.5 text-xs text-foreground">
-          <span className="size-1.5 rounded-full bg-emerald-500" />
+          <span className="size-1.5 rounded-full bg-red-500" />
           Live
         </span>
       </div>
