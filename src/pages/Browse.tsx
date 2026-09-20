@@ -230,16 +230,18 @@ export default function Browse() {
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
   const settings = useQuery(api.settings.get);
   const history = useQuery(api.history.list, { limit: 12 }) ?? [];
+  const bookmarks = useQuery(api.bookmarks.list) ?? [];
 
   const updateSettings = useMutation(api.settings.update);
   const recordVisit = useMutation(api.history.record);
   const clearHistory = useMutation(api.history.clear);
   const removeHistory = useMutation(api.history.remove);
+  const addBookmark = useMutation(api.bookmarks.add);
+  const removeBookmark = useMutation(api.bookmarks.remove);
 
   const [tabs, setTabs] = useState<Tab[]>([newTab()]);
   const [activeId, setActiveId] = useState(() => tabs[0].id);
   const [draft, setDraft] = useState("");
-  const [bookmarks, setBookmarks] = useState(DEFAULT_BOOKMARKS);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [now, setNow] = useState(() => new Date());
@@ -458,7 +460,7 @@ export default function Browse() {
 
   /* -------------------------------- theme --------------------------------- */
 
-  const theme = settings?.theme ?? "light";
+  const theme = settings?.theme ?? "dark";
 
   function cycleTheme() {
     const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
@@ -480,20 +482,21 @@ export default function Browse() {
 
   function toggleBookmark() {
     if (!currentBookmarkUrl || !current) return;
-    setBookmarks((bs) => {
-      if (bs.some((b) => b.url === currentBookmarkUrl)) {
-        toast("Bookmark removed");
-        return bs.filter((b) => b.url !== currentBookmarkUrl);
-      }
-      const label =
-        current.kind === "site"
-          ? hostOf(current.url)
-          : current.kind === "search"
-            ? `Search: ${current.query}`
-            : "New Tab";
-      toast.success("Bookmark added");
-      return [...bs, { label, url: currentBookmarkUrl }];
-    });
+    if (bookmarked) {
+      const match = bookmarks.find((b) => b.url === currentBookmarkUrl);
+      if (!match) return;
+      void removeBookmark({ id: match._id });
+      toast("Bookmark removed");
+      return;
+    }
+    const label =
+      current.kind === "site"
+        ? hostOf(current.url)
+        : current.kind === "search"
+          ? `Search: ${current.query}`
+          : "New Tab";
+    void addBookmark({ label, url: currentBookmarkUrl });
+    toast.success("Bookmark added");
   }
 
   /* ------------------------------- history -------------------------------- */
@@ -949,7 +952,10 @@ export default function Browse() {
 
       {/* ── Bookmarks bar ─────────────────────────────────────────────── */}
       <div className="flex items-center gap-1 overflow-x-auto border-b border-border bg-card px-3 py-1.5">
-        {bookmarks.map((b) => (
+        {(bookmarks.length > 0
+          ? bookmarks
+          : DEFAULT_BOOKMARKS.map((b, i) => ({ ...b, _id: `default-${i}` }))
+        ).map((b) => (
           <button
             key={b.url}
             className="flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -1040,7 +1046,7 @@ export default function Browse() {
         ) : current.status === "loading" ? (
           <LoadingView query={current.query} />
         ) : current.status === "error" ? (
-          <div className="mx-auto max-w-3xl px-6 py-16 text-center">
+          <div className="px-6 py-16 text-center">
             <p className="text-sm text-muted-foreground">{current.error}</p>
             <Button
               variant="outline"
@@ -1111,7 +1117,7 @@ function BrowserHome({
   const [query, setQuery] = useState("");
 
   return (
-    <div className="mx-auto w-full max-w-xl px-4 pb-16 pt-[8vh] sm:px-6">
+    <div className="w-full px-4 pb-16 pt-[8vh] sm:px-8 lg:px-14">
       <div className="text-center">
         <FremanWordmark className="text-4xl" />
         <p className="mt-3 text-sm text-muted-foreground">
@@ -1353,7 +1359,7 @@ function SettingsPage({
   );
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 pb-16 pt-8 sm:px-6">
+    <div className="w-full px-4 pb-16 pt-8 sm:px-8 lg:px-14">
       <div className="flex items-center gap-2.5">
         <SettingsIcon className="size-5 text-muted-foreground" />
         <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
@@ -1584,7 +1590,7 @@ function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
 
 function LoadingView({ query }: { query: string }) {
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
+    <div className="w-full px-4 py-10 sm:px-8">
       <p className="font-mono text-xs text-muted-foreground">
         Searching for “{query}”…
       </p>
@@ -1652,7 +1658,7 @@ function ResultsView({
   const navigate = useNavigate();
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+    <div className="w-full px-4 py-6 sm:px-8 sm:py-8">
       {/* filter chips + source meta */}
       <div className="flex flex-wrap items-center gap-2">
         {FILTERS.map((f) => (

@@ -98,6 +98,14 @@ const schema = defineSchema(
       visitedAt: v.number(),
     })
       .index("by_user_visited", ["userId", "visitedAt"]),
+
+    // Saved bookmarks, shared between the browser's bookmarks bar and Studio.
+    browserBookmarks: defineTable({
+      userId: v.id("users"),
+      label: v.string(),
+      url: v.string(),
+      createdAt: v.number(),
+    }).index("by_user", ["userId"]),
   },
   {
     schemaValidation: false,

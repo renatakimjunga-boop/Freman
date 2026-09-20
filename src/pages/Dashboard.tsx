@@ -23,14 +23,23 @@ import { useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowUpRight,
+  Blocks,
   BookOpen,
+  Bookmark,
   Copy,
+  ExternalLink,
   Globe,
   Hammer,
+  History,
+  Keyboard,
   LayoutGrid,
   LogOut,
+  Palette,
   Puzzle,
   Search,
+  ShieldCheck,
+  Trash2,
+  UserCircle,
   Wallet,
   X,
 } from "lucide-react";
@@ -43,13 +52,32 @@ const CHROMIUM_DOCS =
   "https://chromium.googlesource.com/chromium/src/+/HEAD/docs";
 const SAMPLES_REPO = "https://github.com/GoogleChrome/chrome-extensions-samples";
 
-type SectionId = "overview" | "extensions" | "web3" | "builds" | "source";
+type SectionId =
+  | "overview"
+  | "extensions"
+  | "web3"
+  | "dapps"
+  | "builds"
+  | "history"
+  | "bookmarks"
+  | "appearance"
+  | "privacy"
+  | "account"
+  | "shortcuts"
+  | "source";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Puzzle }[] = [
   { id: "overview", label: "Overview", icon: LayoutGrid },
   { id: "extensions", label: "Extensions", icon: Puzzle },
   { id: "web3", label: "Web3 Wallet", icon: Wallet },
+  { id: "dapps", label: "dApp Directory", icon: Blocks },
   { id: "builds", label: "Builds", icon: Hammer },
+  { id: "history", label: "History", icon: History },
+  { id: "bookmarks", label: "Bookmarks", icon: Bookmark },
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "privacy", label: "Privacy & Search", icon: ShieldCheck },
+  { id: "account", label: "Account", icon: UserCircle },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "source", label: "Source & Docs", icon: BookOpen },
 ];
 
@@ -790,6 +818,578 @@ function SourceSection() {
   );
 }
 
+/* ---------------------------- dApp Directory ----------------------------- */
+
+function DappsSection() {
+  const connections = useQuery(api.wallet.listConnections) ?? [];
+  const accounts = useQuery(api.wallet.listAccounts) ?? [];
+  const connectDapp = useMutation(api.wallet.connectDapp);
+  const disconnectDapp = useMutation(api.wallet.disconnectDapp);
+  const activeAccount = accounts.find((a) => a.isPrimary) ?? accounts[0];
+
+  return (
+    <div className="flex flex-col gap-8">
+      <SectionHeading
+        title="dApp Directory"
+        description="Every dApp Freman knows about, with live session status. Connect from here or from inside the browser — it's the same sessions."
+      />
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {DAPPS.map((dapp) => {
+          const connection = connections.find((c) => c.origin === dapp.origin);
+          const linked = connection
+            ? accounts.find((a) => a._id === connection.accountId)
+            : undefined;
+          return (
+            <div
+              key={dapp.origin}
+              className={`flex flex-col rounded-xl border p-5 transition-colors ${
+                connection ? "border-red-500/40" : "border-border"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-medium">{dapp.name}</h3>
+                  <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                    {dapp.origin}
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className="shrink-0 rounded-full font-normal text-muted-foreground"
+                >
+                  {dapp.chain}
+                </Badge>
+              </div>
+              <p className="mt-3 flex-1 text-xs leading-5 text-muted-foreground">
+                {dapp.blurb}
+              </p>
+              <div className="mt-4 border-t border-border pt-4">
+                {connection ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2 text-xs">
+                      <span className="size-1.5 shrink-0 rounded-full bg-red-500" />
+                      <span className="truncate text-muted-foreground">
+                        {linked ? linked.label : "Connected"}
+                      </span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() =>
+                        disconnectDapp({ connectionId: connection._id })
+                          .then(() => toast.success(`${dapp.name} disconnected`))
+                          .catch(() => toast.error("Could not disconnect"))
+                      }
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs text-muted-foreground">
+                      {activeAccount ? `→ ${activeAccount.label}` : "No account yet"}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 shrink-0 rounded-full px-4 text-xs"
+                      disabled={!activeAccount}
+                      onClick={() =>
+                        activeAccount &&
+                        connectDapp({
+                          origin: dapp.origin,
+                          name: dapp.name,
+                          accountId: activeAccount._id,
+                          chainId: dapp.chainId,
+                        })
+                          .then(() => toast.success(`${dapp.name} connected`))
+                          .catch(() => toast.error("Could not connect"))
+                      }
+                    >
+                      Connect
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        </div>
+    </div>
+  );
+}
+
+/* -------------------------------- History -------------------------------- */
+
+function HistorySection() {
+  const history = useQuery(api.history.list, { limit: 50 }) ?? [];
+  const remove = useMutation(api.history.remove);
+  const clear = useMutation(api.history.clear);
+  const navigate = useNavigate();
+
+  return (
+    <div className="flex flex-col gap-8">
+      <SectionHeading
+        title="History"
+        description="Everything you've visited from the Freman browser, newest first — the same data the browser home page shows."
+      />
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          className="rounded-full px-4 text-xs"
+          onClick={() =>
+            clear()
+              .then(() => toast.success("History cleared"))
+              .catch(() => toast.error("Could not clear history"))
+          }
+        >
+          <Trash2 className="size-3.5" />
+          Clear all history
+        </Button>
+      </div>
+      {history.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+          No history yet. Visit pages in the browser and they'll show up here.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-border">
+          {history.map((entry, i) => (
+            <div
+              key={entry._id}
+              className={`group flex items-center gap-3 px-5 py-3 ${
+                i > 0 ? "border-t border-border" : ""
+              }`}
+            >
+              <button
+                className="min-w-0 flex-1 truncate text-left text-sm transition-colors hover:text-foreground"
+                onClick={() => navigate("/browse")}
+                title={entry.url}
+              >
+                {entry.title}
+              </button>
+              <span className="hidden max-w-[280px] truncate font-mono text-[11px] text-muted-foreground sm:block">
+                {entry.url}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                {formatDistanceToNow(new Date(entry.visitedAt), {
+                  addSuffix: true,
+                })}
+              </span>
+              <button
+                aria-label="Remove entry"
+                className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                onClick={() => void remove({ id: entry._id })}
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------- Bookmarks ------------------------------- */
+
+function BookmarksSection() {
+  const bookmarks = useQuery(api.bookmarks.list) ?? [];
+  const add = useMutation(api.bookmarks.add);
+  const remove = useMutation(api.bookmarks.remove);
+
+  const [label, setLabel] = useState("");
+  const [url, setUrl] = useState("");
+
+  return (
+    <div className="flex flex-col gap-8">
+      <SectionHeading
+        title="Bookmarks"
+        description="Saved pages, synced live with the browser's bookmarks bar — add one here and it appears there instantly."
+      />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Name"
+          className="h-9 w-40 text-xs"
+        />
+        <Input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://example.com"
+          className="h-9 w-64 flex-1 font-mono text-xs"
+        />
+        <Button
+          size="sm"
+          className="h-9 rounded-full px-4 text-xs"
+          onClick={() =>
+            add({ label, url })
+              .then(() => {
+                setLabel("");
+                setUrl("");
+                toast.success("Bookmark added");
+              })
+              .catch(() => toast.error("Could not add bookmark"))
+          }
+        >
+          Add bookmark
+        </Button>
+      </div>
+
+      {bookmarks.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+          No bookmarks yet. Add one above, or star a page in the browser.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-border">
+          {bookmarks.map((bookmark, i) => (
+            <div
+              key={bookmark._id}
+              className={`group flex items-center gap-3 px-5 py-3 ${
+                i > 0 ? "border-t border-border" : ""
+              }`}
+            >
+              <Bookmark className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="text-sm font-medium">{bookmark.label}</span>
+              <a
+                href={bookmark.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hidden max-w-[320px] truncate font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground sm:block"
+              >
+                {bookmark.url}
+              </a>
+              <div className="ml-auto flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => toast("Open it from the browser's bookmarks bar")}
+                >
+                  Open in browser
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 text-muted-foreground hover:text-destructive"
+                  onClick={() => void remove({ id: bookmark._id })}
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------- Appearance ------------------------------ */
+
+function AppearanceSection() {
+  const settings = useQuery(api.settings.get);
+  const update = useMutation(api.settings.update);
+
+  const theme = settings?.theme ?? "dark";
+  const Row = ({
+    title,
+    description,
+    children,
+  }: {
+    title: string;
+    description: string;
+    children: React.ReactNode;
+  }) => (
+    <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          {description}
+        </p>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-8">
+      <SectionHeading
+        title="Appearance"
+        description="Freman's black / white / red identity, tuned your way. Changes apply everywhere instantly."
+      />
+      <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+        <Row
+          title="Theme"
+          description="Light, dark, or follow your operating system."
+        >
+          <div className="inline-flex overflow-hidden rounded-lg border border-border">
+            {(["light", "dark", "system"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => void update({ theme: t })}
+                className={`px-3.5 py-1.5 text-xs capitalize transition-colors ${
+                  theme === t
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </Row>
+      </div>
+      <div className="rounded-xl border border-border bg-muted/40 p-5">
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Brand palette
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          {["#000000", "#ffffff", "#f42a17"].map((hex) => (
+            <span
+              key={hex}
+              className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 font-mono text-xs"
+            >
+              <span
+                className="size-3.5 rounded-full border border-border"
+                style={{ background: hex }}
+              />
+              {hex}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------- Privacy & Search --------------------------- */
+
+function PrivacySection() {
+  const settings = useQuery(api.settings.get);
+  const update = useMutation(api.settings.update);
+  const clearHistory = useMutation(api.history.clear);
+
+  const Row = ({
+    title,
+    description,
+    children,
+  }: {
+    title: string;
+    description: string;
+    children: React.ReactNode;
+  }) => (
+    <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          {description}
+        </p>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-8">
+      <SectionHeading
+        title="Privacy & Search"
+        description="Control what Freman remembers and how its engine behaves — the same settings the browser uses, in real time."
+      />
+      <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+        <Row
+          title="Default search filter"
+          description="Applied to searches started from the browser home page."
+        >
+          <div className="inline-flex overflow-hidden rounded-lg border border-border">
+            {(
+              [
+                ["all", "All"],
+                ["web3", "Web3"],
+                ["docs", "Developer docs"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => void update({ searchFilter: id })}
+                className={`px-3.5 py-1.5 text-xs transition-colors ${
+                  (settings?.searchFilter ?? "all") === id
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Row>
+        <Row
+          title="SafeSearch"
+          description="Filter explicit content out of Brave results."
+        >
+          <Switch
+            checked={settings?.safeSearch ?? false}
+            onCheckedChange={(v) => void update({ safeSearch: v })}
+          />
+        </Row>
+        <Row
+          title="Results per page"
+          description="How many results each search page loads."
+        >
+          <div className="inline-flex overflow-hidden rounded-lg border border-border">
+            {["10", "20", "30"].map((n) => (
+              <button
+                key={n}
+                onClick={() =>
+                  void update({ resultsPerPage: n as "10" | "20" | "30" })
+                }
+                className={`px-3.5 py-1.5 text-xs transition-colors ${
+                  (settings?.resultsPerPage ?? "10") === n
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </Row>
+        <Row
+          title="Save browsing history"
+          description="Keep visited pages on the browser home page. Stored privately in your account."
+        >
+          <Switch
+            checked={settings?.saveHistory ?? true}
+            onCheckedChange={(v) => void update({ saveHistory: v })}
+          />
+        </Row>
+        <Row
+          title="Clear browsing data"
+          description="Delete your entire browsing history right now."
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full px-4 text-xs"
+            onClick={() =>
+              clearHistory()
+                .then(() => toast.success("History cleared"))
+                .catch(() => toast.error("Could not clear history"))
+            }
+          >
+            <Trash2 className="size-3.5" />
+            Clear history
+          </Button>
+        </Row>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- Account -------------------------------- */
+
+function AccountSection() {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+  const history = useQuery(api.history.list, { limit: 1000 }) ?? [];
+  const bookmarks = useQuery(api.bookmarks.list) ?? [];
+  const installed = useQuery(api.extensions.listInstalled) ?? [];
+  const builds = useQuery(api.builds.list) ?? [];
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/");
+  };
+
+  return (
+    <div className="flex flex-col gap-8">
+      <SectionHeading
+        title="Account"
+        description="Your Freman identity and everything attached to it."
+      />
+      <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border p-5">
+        <div className="grid size-12 place-items-center rounded-full bg-primary text-lg font-semibold text-primary-foreground">
+          {(user?.name ?? user?.email ?? "F").charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{user?.name ?? "Freman user"}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {user?.email ?? "—"}
+          </p>
+        </div>
+        <div className="ml-auto flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full px-4 text-xs"
+            onClick={() => navigate("/browse")}
+          >
+            Open browser
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="rounded-full px-4 text-xs"
+            onClick={handleSignOut}
+          >
+            <LogOut className="size-3.5" />
+            Sign out
+          </Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+        <StatBlock value={history.length} label="Pages in history" />
+        <StatBlock value={bookmarks.length} label="Bookmarks" />
+        <StatBlock value={installed.length} label="Extensions installed" />
+        <StatBlock value={builds.length} label="Builds queued" />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- Shortcuts ------------------------------- */
+
+const SHORTCUTS: [string, string][] = [
+  ["⌘ T", "New tab"],
+  ["⌘ W", "Close tab"],
+  ["⌘ L", "Focus the omnibox"],
+  ["⌘ D", "Bookmark the current page"],
+  ["⌘ F", "Find in page"],
+];
+
+function ShortcutsSection() {
+  return (
+    <div className="flex flex-col gap-8">
+      <SectionHeading
+        title="Shortcuts"
+        description="Keyboard controls inside the Freman browser — the same muscle memory as Chrome."
+      />
+      <div className="overflow-hidden rounded-xl border border-border">
+        {SHORTCUTS.map(([keys, description], i) => (
+          <div
+            key={keys}
+            className={`flex items-center justify-between px-5 py-3.5 ${
+              i > 0 ? "border-t border-border" : ""
+            }`}
+          >
+            <span className="text-sm text-muted-foreground">{description}</span>
+            <kbd className="rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs">
+              {keys}
+            </kbd>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        On Windows and Linux, use Ctrl in place of ⌘.
+      </p>
+    </div>
+  );
+}
+
 /* --------------------------------- Shell -------------------------------- */
 
 export default function Dashboard() {
@@ -901,7 +1501,14 @@ export default function Dashboard() {
             )}
             {section === "extensions" && <ExtensionsSection />}
             {section === "web3" && <Web3Section />}
+            {section === "dapps" && <DappsSection />}
             {section === "builds" && <BuildsSection />}
+            {section === "history" && <HistorySection />}
+            {section === "bookmarks" && <BookmarksSection />}
+            {section === "appearance" && <AppearanceSection />}
+            {section === "privacy" && <PrivacySection />}
+            {section === "account" && <AccountSection />}
+            {section === "shortcuts" && <ShortcutsSection />}
             {section === "source" && <SourceSection />}
           </div>
         </main>
