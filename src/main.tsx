@@ -1,9 +1,9 @@
-import '@vly-ai/integrations';
 import { Toaster } from "@/components/ui/sonner";
+import { api } from "@/convex/_generated/api";
 import { RequireAuth } from "@/components/RequireAuth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
-import { ConvexReactClient } from "convex/react";
+import { ConvexReactClient, useConvexAuth, useQuery } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
@@ -15,6 +15,37 @@ const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const Browse = lazy(() => import("./pages/Browse.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+
+/** Applies the user's browser theme (light/dark/system) globally in real time. */
+function ThemeSync() {
+  const { isAuthenticated } = useConvexAuth();
+  const settings = useQuery(api.settings.get);
+  const theme = isAuthenticated ? (settings?.theme ?? "light") : "light";
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const dark =
+      theme === "dark" ||
+      (theme === "system" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches);
+    root.classList.toggle("dark", dark);
+    root.style.colorScheme = dark ? "dark" : "light";
+  }, [theme]);
+
+  // Follow OS changes while in system mode.
+  useEffect(() => {
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      document.documentElement.classList.toggle("dark", mq.matches);
+      document.documentElement.style.colorScheme = mq.matches ? "dark" : "light";
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [theme]);
+
+  return null;
+}
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -116,6 +147,7 @@ createRoot(document.getElementById("root")!).render(
         <VlyToolbar />
       </ToolbarErrorBoundary>
       <ConvexAuthProvider client={convex}>
+        <ThemeSync />
         <BrowserRouter>
           <RouteSyncer />
           <Suspense fallback={<RouteLoading />}>

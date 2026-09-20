@@ -75,6 +75,29 @@ const schema = defineSchema(
       status: v.string(),
       createdAt: v.number(),
     }).index("by_user", ["userId"]),
+
+    // Per-user browser settings, edited live from the browser's Settings page.
+    browserSettings: defineTable({
+      userId: v.id("users"),
+      theme: v.union(v.literal("light"), v.literal("dark"), v.literal("system")),
+      searchFilter: v.union(v.literal("all"), v.literal("web3"), v.literal("docs")),
+      safeSearch: v.boolean(),
+      saveHistory: v.boolean(),
+      homepage: v.string(),
+      resultsPerPage: v.union(v.literal("10"), v.literal("20"), v.literal("30")),
+      updatedAt: v.number(),
+    })
+      .index("by_user", ["userId"])
+      .index("by_user_updated", ["userId", "updatedAt"]),
+
+    // Visited pages, shown on the browser home page.
+    browserHistory: defineTable({
+      userId: v.id("users"),
+      url: v.string(),
+      title: v.string(),
+      visitedAt: v.number(),
+    })
+      .index("by_user_visited", ["userId", "visitedAt"]),
   },
   {
     schemaValidation: false,

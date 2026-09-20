@@ -17,27 +17,36 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import { EXTENSION_SAMPLES } from "@/lib/extension-samples";
 import { DAPPS } from "@/lib/dapps";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowLeft,
   ArrowRight,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   ExternalLink,
   Globe,
+  History,
   Home,
   Lock,
+  Monitor,
+  Moon,
   MoreVertical,
   Paintbrush,
   Plus,
   Puzzle,
   RotateCw,
   Search,
+  Settings as SettingsIcon,
   ShieldAlert,
   ShieldCheck,
   Star,
+  Sun,
+  Trash2,
   Video,
   Wallet,
   X,
@@ -80,11 +89,14 @@ function applyFilter(query: string, filter: FilterId): string {
 
 interface SearchNav {
   kind: "search";
-  query: string; // what the user typed
-  sent: string; // what was sent to the engine (filter applied)
+  query: string;
+  sent: string;
   filter: FilterId;
+  page: number;
+  hasMore: boolean;
   status: "loading" | "done" | "error";
   source?: "live" | "sample";
+  engine?: string;
   notice?: string;
   answerBox?: AnswerBox | null;
   results?: WebResult[];
@@ -96,17 +108,21 @@ interface SiteNav {
   url: string;
 }
 
-interface NtpNav {
-  kind: "ntp";
+interface HomeNav {
+  kind: "home";
 }
 
-type Nav = SearchNav | SiteNav | NtpNav;
+interface SettingsNav {
+  kind: "settings";
+}
+
+type Nav = SearchNav | SiteNav | HomeNav | SettingsNav;
 
 interface Tab {
   id: string;
   entries: Nav[];
   idx: number;
-  loading: boolean; // site-level page load
+  loading: boolean;
 }
 
 const URL_RE = /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i;
@@ -136,15 +152,28 @@ function faviconOf(url: string): string {
 }
 
 function navDisplay(nav: Nav | undefined): string {
-  if (!nav || nav.kind === "ntp") return "";
+  if (!nav) return "";
   if (nav.kind === "site") return nav.url;
-  return nav.query;
+  if (nav.kind === "settings") return "freman://settings";
+  if (nav.kind === "search") return nav.query;
+  return "";
 }
 
 function navTitle(nav: Nav): string {
-  if (nav.kind === "ntp") return "New Tab";
+  if (nav.kind === "home") return "New Tab";
+  if (nav.kind === "settings") return "Settings";
   if (nav.kind === "site") return hostOf(nav.url);
   return nav.query;
+}
+
+function timeAgo(ts: number): string {
+  const seconds = Math.floor((Date.now() - ts) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 const EXTENSION_ICONS: Record<string, typeof Puzzle> = {
@@ -166,7 +195,7 @@ const DEFAULT_BOOKMARKS = [
 function newTab(): Tab {
   return {
     id: Math.random().toString(36).slice(2),
-    entries: [{ kind: "ntp" }],
+    entries: [{ kind: "home" }],
     idx: 0,
     loading: false,
   };
@@ -194,6 +223,13 @@ export default function Browse() {
 
   const installed = useQuery(api.extensions.listInstalled) ?? [];
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
+  const settings = useQuery(api.settings.get);
+  const history = useQuery(api.history.list, { limit: 12 }) ?? [];
+
+  const updateSettings = useMutation(api.settings.update);
+  const recordVisit = useMutation(api.history.record);
+  const clearHistory = useMutation(api.history.clear);
+  const removeHistory = useMutation(api.history.remove);
 
   const [tabs, setTabs] = useState<Tab[]>([newTab()]);
   const [activeId, setActiveId] = useState(() => tabs[0].id);
@@ -265,7 +301,12 @@ export default function Browse() {
     );
   }
 
-  async function runSearch(tabId: string, rawQuery: string, filter: FilterId) {
+  async function runSearch(
+    tabId: string,
+    rawQuery: string,
+    filter: FilterId,
+    page: number,
+  ) {
     const query = rawQuery.trim();
     if (!query) return;
 
@@ -280,6 +321,8 @@ export default function Browse() {
           query,
           sent,
           filter,
+          page,
+          hasMore: false,
           status: "loading",
         });
         entryIndex = entries.length - 1;
@@ -288,13 +331,21 @@ export default function Browse() {
     );
 
     try {
-      const res = await searchWeb({ query: sent });
+      const res = await searchWeb({
+        query: sent,
+        page,
+        count: Number(settings?.resultsPerPage ?? 10),
+        safeSearch: settings?.safeSearch ?? false,
+      });
       patchSearch(tabId, entryIndex, {
         status: "done",
         source: res.source,
+        engine: res.engine,
         notice: res.notice,
         answerBox: res.answerBox,
         results: res.results,
+        page: res.page,
+        hasMore: res.hasMore,
       });
     } catch (err) {
       patchSearch(tabId, entryIndex, {
@@ -307,13 +358,17 @@ export default function Browse() {
     }
   }
 
-  /** Omnibox submit — classify like Chrome: URL, ENS name, address, or search. */
+  /** Omnibox submit — classify like Chrome: internal page, URL, or search. */
   function submitOmnibox() {
     const raw = draft.trim();
     if (!raw) return;
     const tabId = activeTab.id;
-    if (ETH_RE.test(raw) || ADDRESS_RE.test(raw) || !URL_RE.test(raw)) {
-      void runSearch(tabId, raw, "all");
+    if (raw === "freman://settings") {
+      pushNav(tabId, { kind: "settings" });
+    } else if (raw === "freman://home") {
+      pushNav(tabId, { kind: "home" });
+    } else if (ETH_RE.test(raw) || ADDRESS_RE.test(raw) || !URL_RE.test(raw)) {
+      void runSearch(tabId, raw, "all", 1);
     } else {
       pushNav(tabId, { kind: "site", url: normalizeUrl(raw) });
     }
@@ -324,18 +379,23 @@ export default function Browse() {
   }
 
   function runQuery(query: string) {
-    void runSearch(activeTab.id, query, "all");
+    void runSearch(activeTab.id, query, "all", 1);
   }
 
   function changeFilter(filter: FilterId) {
     if (current?.kind !== "search") return;
-    void runSearch(activeTab.id, current.query, filter);
+    void runSearch(activeTab.id, current.query, filter, 1);
+  }
+
+  function gotoPage(page: number) {
+    if (current?.kind !== "search") return;
+    void runSearch(activeTab.id, current.query, current.filter, page);
   }
 
   function reload() {
     if (!current) return;
     if (current.kind === "search") {
-      void runSearch(activeTab.id, current.query, current.filter);
+      void runSearch(activeTab.id, current.query, current.filter, current.page);
     } else if (current.kind === "site") {
       setTabs((ts) =>
         ts.map((t) => (t.id === activeTab.id ? { ...t, loading: true } : t)),
@@ -344,7 +404,12 @@ export default function Browse() {
   }
 
   function goHome() {
-    pushNav(activeTab.id, { kind: "ntp" });
+    const homepage = settings?.homepage ?? "freman://home";
+    if (homepage === "freman://home") {
+      pushNav(activeTab.id, { kind: "home" });
+    } else {
+      openInTab(homepage);
+    }
   }
 
   function go(delta: number) {
@@ -386,6 +451,16 @@ export default function Browse() {
     });
   }
 
+  /* -------------------------------- theme --------------------------------- */
+
+  const theme = settings?.theme ?? "light";
+
+  function cycleTheme() {
+    const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
+    void updateSettings({ theme: next });
+    toast(`Theme: ${next}`, { duration: 1200 });
+  }
+
   /* ------------------------------ bookmarks ------------------------------- */
 
   const currentBookmarkUrl =
@@ -415,6 +490,27 @@ export default function Browse() {
       return [...bs, { label, url: currentBookmarkUrl }];
     });
   }
+
+  /* ------------------------------- history -------------------------------- */
+
+  // Record visits for real sites and completed searches.
+  const visitKey = current
+    ? `${current.kind}:${navDisplay(current)}:${
+        current.kind === "search" ? current.status : ""
+      }`
+    : "none";
+  useEffect(() => {
+    if (!settings?.saveHistory || !current) return;
+    if (current.kind === "site") {
+      void recordVisit({ url: current.url, title: hostOf(current.url) });
+    } else if (current.kind === "search" && current.status === "done") {
+      void recordVisit({
+        url: `freman://search?q=${encodeURIComponent(current.query)}`,
+        title: current.query,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visitKey, settings?.saveHistory]);
 
   /* ---------------------------- find in page ------------------------------ */
 
@@ -468,14 +564,58 @@ export default function Browse() {
       <Lock className="size-3.5 text-muted-foreground" />
     ) : current?.kind === "search" ? (
       <Search className="size-3.5 text-muted-foreground" />
+    ) : current?.kind === "settings" ? (
+      <SettingsIcon className="size-3.5 text-muted-foreground" />
     ) : (
       <Globe className="size-3.5 text-muted-foreground" />
     );
 
+  const ThemeIcon = theme === "dark" ? Moon : theme === "system" ? Monitor : Sun;
+
+  const omnibox = (
+    <form
+      className="order-last w-full sm:order-none sm:mx-2 sm:w-auto sm:flex-1 sm:min-w-0 sm:max-w-2xl"
+      onSubmit={(e) => {
+        e.preventDefault();
+        submitOmnibox();
+      }}
+    >
+      <div className="flex h-9 items-center gap-2 rounded-full border border-border bg-background px-3.5 transition-colors focus-within:border-foreground/50">
+        {omniboxIcon}
+        {current?.kind === "site" && (
+          <span className="hidden shrink-0 items-center gap-1 border-r border-border pr-2 text-xs text-muted-foreground lg:flex">
+            {hostOf(current.url)}
+          </span>
+        )}
+        <input
+          ref={omniboxRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+          placeholder="Search Freman or type a URL"
+          spellCheck={false}
+          className="min-w-0 flex-1 bg-transparent font-mono text-[13px] outline-none placeholder:text-muted-foreground/70"
+        />
+        <button
+          type="button"
+          title={bookmarked ? "Edit bookmark" : "Bookmark this tab (⌘D)"}
+          className="text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+          disabled={!currentBookmarkUrl}
+          onClick={toggleBookmark}
+        >
+          <Star
+            className="size-4"
+            fill={bookmarked ? "currentColor" : "none"}
+          />
+        </button>
+      </div>
+    </form>
+  );
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-muted/40 text-foreground">
-      {/* ── Tab strip ─────────────────────────────────────────────────── */}
-      <div className="flex items-end gap-1 px-3 pt-2">
+      {/* ── Tab strip (desktop) ───────────────────────────────────────── */}
+      <div className="hidden items-end gap-1 px-3 pt-2 sm:flex">
         <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto">
           {tabs.map((tab) => {
             const nav = tab.entries[tab.idx];
@@ -500,6 +640,8 @@ export default function Browse() {
                   />
                 ) : nav && nav.kind === "search" ? (
                   <Search className="size-3.5 shrink-0" />
+                ) : nav && nav.kind === "settings" ? (
+                  <SettingsIcon className="size-3.5 shrink-0" />
                 ) : (
                   <Home className="size-3.5 shrink-0" />
                 )}
@@ -509,9 +651,9 @@ export default function Browse() {
                     setActiveId(tab.id);
                     setDraft(navDisplay(tab.entries[tab.idx]));
                   }}
-                  title={navTitle(nav ?? { kind: "ntp" })}
+                  title={navTitle(nav ?? { kind: "home" })}
                 >
-                  {navTitle(nav ?? { kind: "ntp" })}
+                  {navTitle(nav ?? { kind: "home" })}
                 </button>
                 <button
                   aria-label="Close tab"
@@ -536,7 +678,7 @@ export default function Browse() {
       </div>
 
       {/* ── Toolbar ───────────────────────────────────────────────────── */}
-      <div className="relative flex items-center gap-1 border-b border-border bg-card px-3 py-2">
+      <div className="relative flex flex-wrap items-center gap-1 border-b border-border bg-card px-3 py-2 sm:flex-nowrap">
         <Button
           variant="ghost"
           size="icon"
@@ -550,7 +692,7 @@ export default function Browse() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 text-muted-foreground hover:text-foreground"
+          className="hidden size-8 text-muted-foreground hover:text-foreground sm:inline-flex"
           disabled={activeTab.idx >= activeTab.entries.length - 1}
           onClick={() => go(1)}
           title="Forward"
@@ -560,8 +702,8 @@ export default function Browse() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 text-muted-foreground hover:text-foreground"
-          disabled={!current || current.kind === "ntp"}
+          className="hidden size-8 text-muted-foreground hover:text-foreground sm:inline-flex"
+          disabled={!current || current.kind === "home" || current.kind === "settings"}
           onClick={reload}
           title="Reload"
         >
@@ -570,65 +712,33 @@ export default function Browse() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 text-muted-foreground hover:text-foreground"
+          className="hidden size-8 text-muted-foreground hover:text-foreground sm:inline-flex"
           onClick={goHome}
           title="Home"
         >
           <Home className="size-4" />
         </Button>
 
-        {/* Omnibox */}
-        <form
-          className="mx-2 min-w-0 flex-1"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submitOmnibox();
-          }}
-        >
-          <div
-            className={`flex h-9 items-center gap-2 rounded-full border bg-background px-3.5 transition-colors focus-within:border-foreground/50 ${
-              current?.kind === "site" && !draft.startsWith("http")
-                ? "border-border"
-                : "border-border"
-            }`}
-          >
-            {omniboxIcon}
-            {current?.kind === "site" && (
-              <span className="hidden shrink-0 items-center gap-1 border-r border-border pr-2 text-xs text-muted-foreground sm:flex">
-                {hostOf(current.url)}
-              </span>
-            )}
-            <input
-              ref={omniboxRef}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onFocus={(e) => e.currentTarget.select()}
-              placeholder="Search Freman or type a URL"
-              spellCheck={false}
-              className="min-w-0 flex-1 bg-transparent font-mono text-[13px] outline-none placeholder:text-muted-foreground/70"
-            />
-            <button
-              type="button"
-              title={bookmarked ? "Edit bookmark" : "Bookmark this tab (⌘D)"}
-              className="text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
-              disabled={!currentBookmarkUrl}
-              onClick={toggleBookmark}
-            >
-              <Star
-                className="size-4"
-                fill={bookmarked ? "currentColor" : "none"}
-              />
-            </button>
-          </div>
-        </form>
+        {omnibox}
 
-        {/* Extensions */}
+        {/* Theme quick toggle */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hidden size-8 text-muted-foreground hover:text-foreground sm:inline-flex"
+          onClick={cycleTheme}
+          title={`Theme: ${theme} (light → dark → system)`}
+        >
+          <ThemeIcon className="size-4" />
+        </Button>
+
+        {/* Extensions (desktop) */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="size-8 text-muted-foreground hover:text-foreground"
+              className="hidden size-8 text-muted-foreground hover:text-foreground sm:inline-flex"
               title="Extensions"
             >
               <Puzzle className="size-4" />
@@ -665,7 +775,7 @@ export default function Browse() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="ml-1 grid size-7 shrink-0 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background"
+              className="grid size-7 shrink-0 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background"
               title={user?.email ?? "Profile"}
             >
               {(user?.name ?? user?.email ?? "F").charAt(0).toUpperCase()}
@@ -717,31 +827,102 @@ export default function Browse() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
+            {/* Mobile-only: navigation + tab list */}
+            <div className="sm:hidden">
+              <DropdownMenuItem
+                onSelect={() => go(-1)}
+                disabled={activeTab.idx <= 0}
+              >
+                Back
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => go(1)}
+                disabled={activeTab.idx >= activeTab.entries.length - 1}
+              >
+                Forward
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={reload}>Reload</DropdownMenuItem>
+              <DropdownMenuItem onSelect={goHome}>Home</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Tabs</DropdownMenuLabel>
+              {tabs.map((tab) => (
+                <DropdownMenuCheckboxItem
+                  key={tab.id}
+                  checked={tab.id === activeId}
+                  onCheckedChange={() => {
+                    setActiveId(tab.id);
+                    setDraft(navDisplay(tab.entries[tab.idx]));
+                  }}
+                  className="text-xs"
+                >
+                  <span className="truncate">{navTitle(tab.entries[tab.idx] ?? { kind: "home" })}</span>
+                </DropdownMenuCheckboxItem>
+              ))}
+              <DropdownMenuItem onSelect={openNewTab}>
+                <Plus className="size-3.5" /> New tab
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </div>
+
             <DropdownMenuItem onSelect={openNewTab}>
               New tab
               <DropdownMenuShortcut>⌘T</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => closeTab(activeId)}>
-              Close tab
-              <DropdownMenuShortcut>⌘W</DropdownMenuShortcut>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => setFindOpen((open) => !open)}
-              disabled={current?.kind !== "search"}
-            >
+            <DropdownMenuItem onSelect={() => setFindOpen((o) => !o)}>
               Find in page…
               <DropdownMenuShortcut>⌘F</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={toggleBookmark}
-              disabled={!currentBookmarkUrl}
-            >
-              {bookmarked ? "Remove bookmark" : "Bookmark this tab"}
-              <DropdownMenuShortcut>⌘D</DropdownMenuShortcut>
+            <DropdownMenuItem onSelect={goHome}>
+              Browser home
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => navigate("/dashboard")}>
-              Freman Studio
+            <DropdownMenuLabel>Appearance</DropdownMenuLabel>
+            {(["light", "dark", "system"] as const).map((t) => (
+              <DropdownMenuCheckboxItem
+                key={t}
+                checked={theme === t}
+                onCheckedChange={() => void updateSettings({ theme: t })}
+                className="capitalize"
+              >
+                {t} theme
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Search</DropdownMenuLabel>
+            {FILTERS.map((f) => (
+              <DropdownMenuCheckboxItem
+                key={f.id}
+                checked={(settings?.searchFilter ?? "all") === f.id}
+                onCheckedChange={() => void updateSettings({ searchFilter: f.id })}
+              >
+                {f.label} results
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuCheckboxItem
+              checked={settings?.safeSearch ?? false}
+              onCheckedChange={(v) => void updateSettings({ safeSearch: v })}
+            >
+              SafeSearch
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={settings?.saveHistory ?? true}
+              onCheckedChange={(v) => void updateSettings({ saveHistory: v })}
+            >
+              Save browsing history
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => pushNav(activeTab.id, { kind: "settings" })}
+            >
+              <SettingsIcon className="size-3.5" /> Settings
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                void clearHistory();
+                toast.success("Browsing history cleared");
+              }}
+            >
+              <Trash2 className="size-3.5" /> Clear browsing data
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() =>
@@ -762,11 +943,11 @@ export default function Browse() {
       </div>
 
       {/* ── Bookmarks bar ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 border-b border-border bg-card px-3 py-1.5">
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-border bg-card px-3 py-1.5">
         {bookmarks.map((b) => (
           <button
             key={b.url}
-            className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             onClick={() => openInTab(b.url)}
           >
             <img
@@ -816,8 +997,30 @@ export default function Browse() {
 
       {/* ── Viewport ──────────────────────────────────────────────────── */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-background">
-        {!current || current.kind === "ntp" ? (
-          <NewTabPage onSearch={runQuery} onNavigate={openInTab} userName={user?.name ?? undefined} />
+        {!current || current.kind === "home" ? (
+          <BrowserHome
+            onSearch={runQuery}
+            onNavigate={openInTab}
+            onOpenSettings={() => pushNav(activeTab.id, { kind: "settings" })}
+            userName={user?.name ?? undefined}
+            history={history}
+            saveHistory={settings?.saveHistory ?? true}
+            onRemoveHistory={(id) => void removeHistory({ id })}
+            onClearHistory={() => {
+              void clearHistory();
+              toast.success("Browsing history cleared");
+            }}
+          />
+        ) : current.kind === "settings" ? (
+          <SettingsPage
+            settings={settings}
+            onUpdate={(patch) => void updateSettings(patch)}
+            canSetHome={
+              current.kind === "settings" ? null : null
+            }
+            onNavigate={openInTab}
+            onGoHome={() => pushNav(activeTab.id, { kind: "home" })}
+          />
         ) : current.kind === "site" ? (
           <SiteView
             url={current.url}
@@ -849,49 +1052,61 @@ export default function Browse() {
             onFilterChange={changeFilter}
             onRunSearch={runQuery}
             onNavigate={openInTab}
+            onPageChange={gotoPage}
             findQuery={findOpen ? findQuery.trim() : ""}
           />
         )}
       </div>
 
-      {/* ── Status bar ────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between border-t border-border bg-card px-4 py-1 font-mono text-[11px] text-muted-foreground">
+      {/* ── Status bar (desktop) ──────────────────────────────────────── */}
+      <div className="hidden items-center justify-between border-t border-border bg-card px-4 py-1 font-mono text-[11px] text-muted-foreground sm:flex">
         <span className="flex items-center gap-2">
           <span className="size-1.5 rounded-full bg-emerald-500" />
           ETH · Mainnet
-          <span className="hidden text-border sm:inline">|</span>
-          <span className="hidden sm:inline">Freman 1.0</span>
+          <span className="text-border">|</span>
+          Freman 1.0
         </span>
         <span className="max-w-[50%] truncate">
           {current ? navDisplay(current) || "New Tab" : "New Tab"}
         </span>
         <span>
-          {now.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
+          {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       </div>
     </div>
   );
 }
 
-/* ------------------------------- new tab -------------------------------- */
+/* ----------------------------- browser home ------------------------------ */
 
-function NewTabPage({
+import type { Doc } from "@/convex/_generated/dataModel";
+
+type HistoryEntry = Doc<"browserHistory">;
+
+function BrowserHome({
   onSearch,
   onNavigate,
+  onOpenSettings,
   userName,
+  history,
+  saveHistory,
+  onRemoveHistory,
+  onClearHistory,
 }: {
   onSearch: (query: string) => void;
   onNavigate: (url: string) => void;
+  onOpenSettings: () => void;
   userName?: string;
+  history: HistoryEntry[];
+  saveHistory: boolean;
+  onRemoveHistory: (id: HistoryEntry["_id"]) => void;
+  onClearHistory: () => void;
 }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
 
   return (
-    <div className="mx-auto w-full max-w-xl px-6 pb-16 pt-[10vh]">
+    <div className="mx-auto w-full max-w-xl px-4 pb-16 pt-[8vh] sm:px-6">
       <div className="text-center">
         <FremanWordmark className="text-4xl" />
         <p className="mt-3 text-sm text-muted-foreground">
@@ -918,7 +1133,84 @@ function NewTabPage({
         </div>
       </form>
 
-      <div className="mt-12">
+      {/* Recent activity — real-time from Convex */}
+      <div className="mt-10">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            Recent activity
+          </p>
+          {history.length > 0 && (
+            <button
+              onClick={onClearHistory}
+              className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+        <div className="mt-3 overflow-hidden rounded-xl border border-border">
+          {!saveHistory ? (
+            <button
+              onClick={onOpenSettings}
+              className="flex w-full items-center justify-between px-4 py-3 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+            >
+              History is paused — turn it back on in Settings
+              <SettingsIcon className="size-3.5" />
+            </button>
+          ) : history.length === 0 ? (
+            <p className="px-4 py-3 text-xs text-muted-foreground">
+              Pages you visit will appear here.
+            </p>
+          ) : (
+            history.map((entry, i) => (
+              <div
+                key={entry._id}
+                className={`group flex items-center gap-3 px-4 py-2.5 ${
+                  i > 0 ? "border-t border-border" : ""
+                }`}
+              >
+                {entry.url.startsWith("http") ? (
+                  <img
+                    src={faviconOf(entry.url)}
+                    alt=""
+                    className="size-3.5 shrink-0 rounded-sm"
+                    onError={(e) => {
+                      e.currentTarget.style.visibility = "hidden";
+                    }}
+                  />
+                ) : (
+                  <Search className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <button
+                  className="min-w-0 flex-1 truncate text-left text-sm transition-colors hover:text-foreground"
+                  onClick={() =>
+                    entry.url.startsWith("http")
+                      ? onNavigate(entry.url)
+                      : onSearch(
+                          new URL(entry.url).searchParams.get("q") ?? "",
+                        )
+                  }
+                  title={entry.url}
+                >
+                  {entry.title}
+                </button>
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                  {timeAgo(entry.visitedAt)}
+                </span>
+                <button
+                  aria-label="Remove entry"
+                  className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                  onClick={() => onRemoveHistory(entry._id)}
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="mt-8">
         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
           Web3 shortcuts
         </p>
@@ -977,6 +1269,219 @@ function NewTabPage({
   );
 }
 
+/* ------------------------------- settings -------------------------------- */
+
+function SettingsPage({
+  settings,
+  onUpdate,
+  onNavigate,
+  onGoHome,
+}: {
+  settings:
+    | {
+        theme: "light" | "dark" | "system";
+        searchFilter: "all" | "web3" | "docs";
+        safeSearch: boolean;
+        saveHistory: boolean;
+        homepage: string;
+        resultsPerPage: "10" | "20" | "30";
+      }
+    | undefined;
+  onUpdate: (patch: {
+    theme?: "light" | "dark" | "system";
+    searchFilter?: "all" | "web3" | "docs";
+    safeSearch?: boolean;
+    saveHistory?: boolean;
+    homepage?: string;
+    resultsPerPage?: "10" | "20" | "30";
+  }) => void;
+  canSetHome: string | null;
+  onNavigate: (url: string) => void;
+  onGoHome: () => void;
+}) {
+  const theme = settings?.theme ?? "light";
+
+  const Row = ({
+    title,
+    description,
+    children,
+  }: {
+    title: string;
+    description: string;
+    children: React.ReactNode;
+  }) => (
+    <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          {description}
+        </p>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+
+  const Segmented = <T extends string>({
+    value,
+    options,
+    onChange,
+  }: {
+    value: T;
+    options: { id: T; label: string }[];
+    onChange: (id: T) => void;
+  }) => (
+    <div className="inline-flex overflow-hidden rounded-lg border border-border">
+      {options.map((opt) => (
+        <button
+          key={opt.id}
+          onClick={() => onChange(opt.id)}
+          className={`px-3.5 py-1.5 text-xs transition-colors ${
+            value === opt.id
+              ? "bg-foreground text-background"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="mx-auto w-full max-w-2xl px-4 pb-16 pt-8 sm:px-6">
+      <div className="flex items-center gap-2.5">
+        <SettingsIcon className="size-5 text-muted-foreground" />
+        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Changes apply instantly, on every device you sign in from.
+      </p>
+
+      {/* Appearance */}
+      <div className="mt-8">
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Appearance
+        </p>
+        <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
+          <Row
+            title="Theme"
+            description="Light, dark, or follow your operating system."
+          >
+            <Segmented
+              value={theme}
+              options={[
+                { id: "light", label: "Light" },
+                { id: "dark", label: "Dark" },
+                { id: "system", label: "System" },
+              ]}
+              onChange={(id) => onUpdate({ theme: id })}
+            />
+          </Row>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="mt-8">
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Search engine
+        </p>
+        <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
+          <Row
+            title="Default filter"
+            description="Applied to searches started from the home page."
+          >
+            <Segmented
+              value={settings?.searchFilter ?? "all"}
+              options={FILTERS.map((f) => ({ id: f.id, label: f.label }))}
+              onChange={(id) => onUpdate({ searchFilter: id })}
+            />
+          </Row>
+          <Row
+            title="SafeSearch"
+            description="Filter explicit content out of Brave results."
+          >
+            <Switch
+              checked={settings?.safeSearch ?? false}
+              onCheckedChange={(v) => onUpdate({ safeSearch: v })}
+            />
+          </Row>
+          <Row
+            title="Results per page"
+            description="How many results to load per page."
+          >
+            <Segmented
+              value={settings?.resultsPerPage ?? "10"}
+              options={[
+                { id: "10", label: "10" },
+                { id: "20", label: "20" },
+                { id: "30", label: "30" },
+              ]}
+              onChange={(id) => onUpdate({ resultsPerPage: id })}
+            />
+          </Row>
+        </div>
+      </div>
+
+      {/* Privacy */}
+      <div className="mt-8">
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          Privacy
+        </p>
+        <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
+          <Row
+            title="Save browsing history"
+            description="Keep visited pages on your home page. Stored privately in your account."
+          >
+            <Switch
+              checked={settings?.saveHistory ?? true}
+              onCheckedChange={(v) => onUpdate({ saveHistory: v })}
+            />
+          </Row>
+          <Row
+            title="Homepage"
+            description={
+              settings?.homepage && settings.homepage !== "freman://home"
+                ? `Opens to ${hostOf(settings.homepage)}`
+                : "Opens to the Freman home page."
+            }
+          >
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-full"
+              onClick={onGoHome}
+            >
+              <Home className="size-3.5" />
+              Preview
+            </Button>
+          </Row>
+        </div>
+      </div>
+
+      {/* About */}
+      <div className="mt-8">
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          About
+        </p>
+        <div className="mt-3 overflow-hidden rounded-xl border border-border">
+          <div className="flex items-center justify-between px-5 py-4">
+            <div>
+              <p className="text-sm font-medium">Freman 1.0</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                The Web3 browser, for everyone.
+              </p>
+            </div>
+            <span className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1 font-mono text-[11px] text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              Brave · live
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------- site view ------------------------------- */
 
 function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
@@ -1003,7 +1508,7 @@ function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
             (X-Frame-Options). Freman opens it externally instead — everything
             else keeps working right here.
           </p>
-          <div className="mt-6 flex justify-center gap-2">
+          <div className="mt-6 flex flex-wrap justify-center gap-2">
             <Button asChild size="sm" className="rounded-full px-5">
               <a href={url} target="_blank" rel="noopener noreferrer">
                 Open in a browser tab
@@ -1047,12 +1552,12 @@ function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
 
 function LoadingView({ query }: { query: string }) {
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10">
+    <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
       <p className="font-mono text-xs text-muted-foreground">
         Searching for “{query}”…
       </p>
       <div className="mt-8 flex flex-col gap-8">
-        {[0, 1, 2, 3].map((i) => (
+        {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="flex flex-col gap-2.5">
             <div className="h-3 w-32 animate-pulse rounded bg-muted" />
             <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
@@ -1101,6 +1606,7 @@ function ResultsView({
   onFilterChange,
   onRunSearch,
   onNavigate,
+  onPageChange,
   findQuery,
 }: {
   entry: SearchNav;
@@ -1108,12 +1614,13 @@ function ResultsView({
   onFilterChange: (f: FilterId) => void;
   onRunSearch: (q: string) => void;
   onNavigate: (url: string) => void;
+  onPageChange: (page: number) => void;
   findQuery: string;
 }) {
   const navigate = useNavigate();
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-8">
+    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       {/* filter chips + source meta */}
       <div className="flex flex-wrap items-center gap-2">
         {FILTERS.map((f) => (
@@ -1131,7 +1638,7 @@ function ResultsView({
         ))}
         <span className="ml-auto font-mono text-[11px] text-muted-foreground">
           {entry.source === "live"
-            ? "Live results · Brave Search"
+            ? `Live results · ${entry.engine ?? "Freman live index"}`
             : "Sample results"}
         </span>
       </div>
@@ -1162,7 +1669,7 @@ function ResultsView({
               <ExternalLink className="ml-1 size-3" />
             </Button>
           ) : (
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-3 flex flex-wrap items-center gap-3">
               <p className="text-xs text-muted-foreground">
                 Install ENS Resolver from the Catalog to resolve .eth names
                 directly.
@@ -1275,6 +1782,35 @@ function ResultsView({
           </div>
         )}
       </div>
+
+      {/* Pagination */}
+      {(entry.results ?? []).length > 0 && (
+        <div className="mt-8 flex items-center justify-between border-t border-border pt-4">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            disabled={entry.page <= 1}
+            onClick={() => onPageChange(entry.page - 1)}
+          >
+            <ChevronLeft className="size-3.5" />
+            Previous
+          </Button>
+          <span className="font-mono text-xs text-muted-foreground">
+            Page {entry.page}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            disabled={!entry.hasMore}
+            onClick={() => onPageChange(entry.page + 1)}
+          >
+            Next
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1293,7 +1829,7 @@ function WalletPopover() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 text-muted-foreground hover:text-foreground"
+          className="hidden size-8 text-muted-foreground hover:text-foreground sm:inline-flex"
           title="Wallet — Wallet Provider"
         >
           <Wallet className="size-4" />

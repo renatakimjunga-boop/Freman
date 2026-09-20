@@ -34,6 +34,8 @@ interface SearchResponse {
   notice?: string;
   results: WebResult[];
   answerBox: AnswerBox | null;
+  page: number;
+  hasMore: boolean;
 }
 
 function hostOf(url: string): string {
@@ -72,10 +74,18 @@ async function fetchJson(url: string | URL, init?: RequestInit): Promise<unknown
 
 /* ------------------------------ Brave (keyed) ----------------------------- */
 
-async function searchBrave(query: string, apiKey: string): Promise<SearchResponse> {
+async function searchBrave(
+  query: string,
+  apiKey: string,
+  page: number,
+  count: number,
+  safeSearch: boolean,
+): Promise<SearchResponse> {
   const endpoint = new URL("https://api.search.brave.com/res/v1/web/search");
   endpoint.searchParams.set("q", query);
-  endpoint.searchParams.set("count", "10");
+  endpoint.searchParams.set("count", String(count));
+  endpoint.searchParams.set("offset", String(page - 1)); // Brave is zero-based
+  if (safeSearch) endpoint.searchParams.set("safesearch", "strict");
 
   const data = (await fetchJson(endpoint, {
     headers: { "X-Subscription-Token": apiKey },
@@ -111,7 +121,14 @@ async function searchBrave(query: string, apiKey: string): Promise<SearchRespons
         }
       : null;
 
-  return { source: "live", engine: "Brave Search", results, answerBox };
+  return {
+    source: "live",
+    engine: "Brave Search",
+    results,
+    answerBox: page === 1 ? answerBox : null,
+    page,
+    hasMore: results.length === count,
+  };
 }
 
 /* --------------------------- Keyless live sources ------------------------- */
@@ -199,22 +216,38 @@ async function searchWikipedia(query: string): Promise<Scored[]> {
 }
 
 async function searchHackerNews(query: string): Promise<Scored[]> {
+  return (await searchHackerNewsRaw(query, 0, 5)).hits;
+}
+
+interface HnHits {
+  hits?: {
+    title?: string;
+    url?: string | null;
+    objectID: string;
+    points?: number;
+    num_comments?: number;
+    story_text?: string | null;
+  }[];
+  nbPages?: number;
+}
+
+/** Fetch one raw page of HN stories; shared by first-page merge + deep pages. */
+async function searchHackerNewsRaw(
+  query: string,
+  pageIdx: number,
+  perPage: number,
+): Promise<{ hits: Scored[]; nbPages: number }> {
   const endpoint = new URL("https://hn.algolia.com/api/v1/search");
   endpoint.searchParams.set("query", query);
-  endpoint.searchParams.set("hitsPerPage", "5");
+  endpoint.searchParams.set("page", String(pageIdx));
+  endpoint.searchParams.set("hitsPerPage", String(perPage));
   endpoint.searchParams.set("tags", "story");
 
-  const data = (await fetchJson(endpoint)) as {
-    hits?: {
-      title?: string;
-      url?: string | null;
-      objectID: string;
-      points?: number;
-      num_comments?: number;
-      story_text?: string | null;
-    }[];
-  };
+  const data = (await fetchJson(endpoint)) as HnHits;
+  return { hits: mapHnHits(data), nbPages: data.nbPages ?? 1 };
+}
 
+function mapHnHits(data: HnHits): Scored[] {
   return (data.hits ?? [])
     .filter((h) => h.title)
     .map((hit) => {
@@ -236,7 +269,12 @@ async function searchHackerNews(query: string): Promise<Scored[]> {
     });
 }
 
-async function searchKeyless(query: string): Promise<SearchResponse> {
+async function searchKeyless(query: string, page: number): Promise<SearchResponse> {
+  if (page > 1) {
+    // The keyless sources only serve a first page; deeper pages come from
+    // HN Algolia's pagination.
+    return searchHackerNewsPage(query, page);
+  }
   const settled = await Promise.allSettled([
     searchDuckDuckGo(query),
     searchWikipedia(query),
@@ -280,14 +318,56 @@ async function searchKeyless(query: string): Promise<SearchResponse> {
         }
       : null,
     results,
+    page: 1,
+    hasMore: true, // deeper pages continue via searchHackerNewsPage
+  };
+}
+
+/** Deeper pages for the keyless index — HN Algolia supports pagination. */
+async function searchHackerNewsPage(
+  query: string,
+  page: number,
+): Promise<SearchResponse> {
+  const endpoint = new URL("https://hn.algolia.com/api/v1/search");
+  endpoint.searchParams.set("query", query);
+  endpoint.searchParams.set("hitsPerPage", "12");
+  endpoint.searchParams.set("page", String(page - 1));
+  endpoint.searchParams.set("tags", "story");
+
+  const data = (await fetchJson(endpoint)) as {
+    hits?: { title?: string; url?: string | null; objectID: string }[];
+    nbPages?: number;
+  };
+
+  const results: WebResult[] = (data.hits ?? [])
+    .filter((h) => h.title)
+    .map((hit) => {
+      const url = hit.url ?? `https://news.ycombinator.com/item?id=${hit.objectID}`;
+      return {
+        title: hit.title!,
+        url,
+        snippet: "Discussed on Hacker News.",
+        source: hostOf(url),
+      };
+    });
+
+  return {
+    source: "live",
+    engine: "Freman live index",
+    results,
+    answerBox: null,
+    page,
+    hasMore: (data.nbPages ?? 1) > page,
   };
 }
 
 /* ------------------------------ sample fallback --------------------------- */
 
-function sampleResults(query: string): SearchResponse {
+function sampleResults(query: string, page: number): SearchResponse {
   const q = encodeURIComponent(query);
   return {
+    page,
+    hasMore: false,
     source: "sample",
     engine: "Freman sample results",
     notice:
@@ -325,15 +405,27 @@ function sampleResults(query: string): SearchResponse {
 /* --------------------------------- action --------------------------------- */
 
 export const searchWeb = action({
-  args: { query: v.string() },
-  handler: async (_ctx, { query }): Promise<SearchResponse> => {
+  args: {
+    query: v.string(),
+    page: v.optional(v.number()),
+    count: v.optional(v.number()),
+    safeSearch: v.optional(v.boolean()),
+  },
+  handler: async (
+    _ctx,
+    { query, page, count, safeSearch },
+  ): Promise<SearchResponse> => {
     const q = query.trim();
+    const pageNum = Math.max(1, page ?? 1);
+    const perPage = Math.min(30, Math.max(10, count ?? 10));
     if (!q) {
       return {
         source: "sample",
         engine: "Freman sample results",
         results: [],
         answerBox: null,
+        page: pageNum,
+        hasMore: false,
       };
     }
 
@@ -342,16 +434,16 @@ export const searchWeb = action({
 
     if (apiKey) {
       try {
-        return await searchBrave(q, apiKey);
+        return await searchBrave(q, apiKey, pageNum, perPage, safeSearch ?? false);
       } catch {
         // Fall through to keyless sources.
       }
     }
 
     try {
-      return await searchKeyless(q);
+      return await searchKeyless(q, pageNum);
     } catch {
-      return sampleResults(q);
+      return sampleResults(q, pageNum);
     }
   },
 });
