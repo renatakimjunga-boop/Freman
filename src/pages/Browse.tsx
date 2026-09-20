@@ -34,6 +34,7 @@ import {
   Home,
   Lock,
   Monitor,
+  MonitorSmartphone,
   Moon,
   MoreVertical,
   Paintbrush,
@@ -43,6 +44,7 @@ import {
   Search,
   Settings as SettingsIcon,
   ShieldCheck,
+  Smartphone,
   Star,
   Sun,
   Trash2,
@@ -122,6 +124,8 @@ interface Tab {
   entries: Nav[];
   idx: number;
   loading: boolean;
+  /** Per-tab device view: "desktop" renders full-width, "mobile" renders in a phone frame. */
+  view: "desktop" | "mobile";
 }
 
 const URL_RE = /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i;
@@ -154,6 +158,12 @@ function faviconOf(url: string): string {
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(
     hostOf(url),
   )}&sz=64`;
+}
+
+/** Proxy URL for a page, honoring the tab's device view. */
+function proxiedUrl(url: string, view: "desktop" | "mobile"): string {
+  const viewParam = view === "mobile" ? "&view=mobile" : "";
+  return `${CONVEX_SITE_URL}/fetchProxy?url=${encodeURIComponent(url)}${viewParam}`;
 }
 
 function navDisplay(nav: Nav | undefined): string {
@@ -197,12 +207,13 @@ const DEFAULT_BOOKMARKS = [
   { label: "Etherscan", url: "https://etherscan.io" },
 ];
 
-function newTab(): Tab {
+function newTab(view: "desktop" | "mobile" = "desktop"): Tab {
   return {
     id: Math.random().toString(36).slice(2),
     entries: [{ kind: "home" }],
     idx: 0,
     loading: false,
+    view,
   };
 }
 
@@ -250,6 +261,18 @@ export default function Browse() {
   const activeTab = tabs.find((t) => t.id === activeId) ?? tabs[0];
   const current =
     activeTab.idx >= 0 ? activeTab.entries[activeTab.idx] : undefined;
+
+  /** New tabs open with the user's default device view, once settings arrive. */
+  const defaultView = settings?.defaultView ?? "desktop";
+  useEffect(() => {
+    setTabs((ts) =>
+      ts.map((t) =>
+        t.entries.length === 1 && t.entries[0].kind === "home"
+          ? { ...t, view: defaultView }
+          : t,
+      ),
+    );
+  }, [defaultView]);
 
   useEffect(() => {
     setDraft(navDisplay(current));
@@ -434,10 +457,19 @@ export default function Browse() {
   }
 
   function openNewTab() {
-    const tab = newTab();
+    const tab = newTab(defaultView);
     setTabs((ts) => [...ts, tab]);
     setActiveId(tab.id);
     setDraft("");
+  }
+
+  /** Toggle the active tab between desktop and mobile device views. */
+  function toggleView() {
+    const next = activeTab.view === "desktop" ? "mobile" : "desktop";
+    setTabs((ts) =>
+      ts.map((t) => (t.id === activeTab.id ? { ...t, view: next } : t)),
+    );
+    toast(`View: ${next}`, { duration: 1200 });
   }
 
   function closeTab(id: string) {
@@ -554,6 +586,9 @@ export default function Browse() {
       } else if (e.key === "l") {
         e.preventDefault();
         omniboxRef.current?.focus();
+      } else if (e.key === "m" && e.shiftKey) {
+        e.preventDefault();
+        toggleView();
       }
     }
     window.addEventListener("keydown", onKey);
@@ -579,6 +614,7 @@ export default function Browse() {
     );
 
   const ThemeIcon = theme === "dark" ? Moon : theme === "system" ? Monitor : Sun;
+  const ViewIcon = activeTab.view === "mobile" ? Smartphone : MonitorSmartphone;
 
   const omnibox = (
     <form
@@ -740,6 +776,21 @@ export default function Browse() {
           <ThemeIcon className="size-4" />
         </Button>
 
+        {/* Device view toggle: desktop ↔ mobile */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={`hidden size-8 hover:text-foreground sm:inline-flex ${
+            activeTab.view === "mobile"
+              ? "text-foreground"
+              : "text-muted-foreground"
+          }`}
+          onClick={toggleView}
+          title={`Device view: ${activeTab.view} (click to switch)`}
+        >
+          <ViewIcon className="size-4" />
+        </Button>
+
         {/* Extensions (desktop) */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -895,6 +946,11 @@ export default function Browse() {
                 {t} theme
               </DropdownMenuCheckboxItem>
             ))}
+            <DropdownMenuItem onSelect={toggleView}>
+              <ViewIcon className="size-3.5" />
+              {activeTab.view === "desktop" ? "Mobile view" : "Desktop site"}
+              <DropdownMenuShortcut>⇧⌘M</DropdownMenuShortcut>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Search</DropdownMenuLabel>
             {FILTERS.map((f) => (
@@ -1035,6 +1091,7 @@ export default function Browse() {
         ) : current.kind === "site" ? (
           <SiteView
             url={current.url}
+            view={activeTab.view}
             onLoaded={() =>
               setTabs((ts) =>
                 ts.map((t) =>
@@ -1296,6 +1353,7 @@ function SettingsPage({
         saveHistory: boolean;
         homepage: string;
         resultsPerPage: "10" | "20" | "30";
+        defaultView: "desktop" | "mobile";
       }
     | undefined;
   onUpdate: (patch: {
@@ -1305,6 +1363,7 @@ function SettingsPage({
     saveHistory?: boolean;
     homepage?: string;
     resultsPerPage?: "10" | "20" | "30";
+    defaultView?: "desktop" | "mobile";
   }) => void;
   canSetHome: string | null;
   onNavigate: (url: string) => void;
@@ -1449,6 +1508,19 @@ function SettingsPage({
             />
           </Row>
           <Row
+            title="Default device view"
+            description="New tabs open in desktop view, or in a phone-sized mobile view."
+          >
+            <Segmented
+              value={settings?.defaultView ?? "desktop"}
+              options={[
+                { id: "desktop", label: "Desktop" },
+                { id: "mobile", label: "Mobile" },
+              ]}
+              onChange={(id) => onUpdate({ defaultView: id })}
+            />
+          </Row>
+          <Row
             title="Homepage"
             description={
               settings?.homepage && settings.homepage !== "freman://home"
@@ -1495,7 +1567,15 @@ function SettingsPage({
 
 /* ------------------------------- site view ------------------------------- */
 
-function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
+function SiteView({
+  url,
+  view,
+  onLoaded,
+}: {
+  url: string;
+  view: "desktop" | "mobile";
+  onLoaded: () => void;
+}) {
   const [loaded, setLoaded] = useState(false);
   const [slow, setSlow] = useState(false);
   const [showChip, setShowChip] = useState(true);
@@ -1503,7 +1583,8 @@ function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
 
   // Pages are fetched through Freman's own proxy, which strips
   // X-Frame-Options / CSP frame-ancestors — so sites can't refuse to load.
-  const proxiedSrc = `${CONVEX_SITE_URL}/fetchProxy?url=${encodeURIComponent(url)}`;
+  // Mobile view also sends a phone user-agent, so sites serve their mobile web.
+  const proxiedSrc = proxiedUrl(url, view);
 
   useEffect(() => {
     setLoaded(false);
@@ -1511,77 +1592,139 @@ function SiteView({ url, onLoaded }: { url: string; onLoaded: () => void }) {
     setShowChip(true);
     const timer = setTimeout(() => setSlow(true), 6000);
     return () => clearTimeout(timer);
-  }, [url, attempt]);
+  }, [url, view, attempt]);
 
+  const iframe = (
+    <iframe
+      key={`${url}-${view}-${attempt}`}
+      src={proxiedSrc}
+      title={hostOf(url)}
+      className="h-full w-full border-0 bg-background transition-opacity"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+      referrerPolicy="no-referrer-when-downgrade"
+      onLoad={() => {
+        setLoaded(true);
+        onLoaded();
+      }}
+    />
+  );
+
+  const loadingOverlay = (
+    <div className="pointer-events-none absolute inset-0 grid place-items-center">
+      <div className="flex flex-col items-center gap-3">
+        <img
+          src={faviconOf(url)}
+          alt=""
+          className="size-6 rounded opacity-60"
+          onError={(e) => {
+            e.currentTarget.style.visibility = "hidden";
+          }}
+        />
+        <p className="font-mono text-xs text-muted-foreground">
+          Loading {hostOf(url)}…
+        </p>
+      </div>
+    </div>
+  );
+
+  const proxyChip = loaded && showChip && (
+    <div className="absolute bottom-3 right-3 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+      <ShieldCheck className="size-3.5" />
+      <span className="hidden sm:inline">Opened through Freman’s proxy</span>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1 transition-colors hover:text-foreground"
+      >
+        Open original
+        <ExternalLink className="size-3" />
+      </a>
+      <button
+        aria-label="Dismiss"
+        className="text-muted-foreground hover:text-foreground"
+        onClick={() => setShowChip(false)}
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  );
+
+  const slowChip = slow && !loaded && (
+    <div className="absolute bottom-3 right-3 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+      Still loading — some sites are slow through the proxy.
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1 transition-colors hover:text-foreground"
+      >
+        Open directly
+        <ExternalLink className="size-3" />
+      </a>
+    </div>
+  );
+
+  // Mobile view: the page renders inside a phone frame with a device status
+  // bar, and was fetched with a mobile user-agent (via ?view=mobile).
+  if (view === "mobile") {
+    return (
+      <div className="flex h-full min-h-[70vh] w-full justify-center bg-muted/40 p-3 sm:p-6">
+        <div className="h-fit w-full max-w-[392px]">
+          <div className="overflow-hidden rounded-[2.4rem] border border-border bg-black shadow-2xl">
+            {/* Status bar */}
+            <div className="relative flex h-10 items-center justify-center bg-black">
+              <span className="absolute left-6 text-[11px] font-semibold text-white">
+                9:41
+              </span>
+              <span className="h-6 w-24 rounded-full bg-white" />
+              <span className="absolute right-5 flex items-center gap-1.5 text-white">
+                <svg viewBox="0 0 18 12" className="h-3 w-4 fill-current">
+                  <rect x="0" y="8" width="3" height="4" rx="0.5" />
+                  <rect x="5" y="5.5" width="3" height="6.5" rx="0.5" />
+                  <rect x="10" y="3" width="3" height="9" rx="0.5" />
+                  <rect x="15" y="0" width="3" height="12" rx="0.5" />
+                </svg>
+                <svg viewBox="0 0 25 12" className="h-3 w-6">
+                  <rect
+                    x="0.5"
+                    y="0.5"
+                    width="21"
+                    height="11"
+                    rx="3"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeOpacity="0.5"
+                  />
+                  <rect x="2" y="2" width="18" height="8" rx="1.8" fill="currentColor" />
+                  <rect x="23" y="4" width="2" height="4" rx="1" fill="currentColor" fillOpacity="0.5" />
+                </svg>
+              </span>
+            </div>
+            {/* Screen */}
+            <div className="relative h-[68vh] max-h-[720px] min-h-[440px]">
+              {!loaded && loadingOverlay}
+              {iframe}
+              {slowChip}
+            </div>
+            {/* Home indicator */}
+            <div className="flex h-6 items-center justify-center bg-black">
+              <span className="h-1 w-28 rounded-full bg-white/80" />
+            </div>
+          </div>
+          {proxyChip}
+        </div>
+      </div>
+    );
+  }
+
+  // Desktop view: the page uses the full width of the browser window.
   return (
     <div className="relative h-full min-h-[60vh] w-full">
-      {!loaded && (
-        <div className="pointer-events-none absolute inset-0 grid place-items-center">
-          <div className="flex flex-col items-center gap-3">
-            <img
-              src={faviconOf(url)}
-              alt=""
-              className="size-6 rounded opacity-60"
-              onError={(e) => {
-                e.currentTarget.style.visibility = "hidden";
-              }}
-            />
-            <p className="font-mono text-xs text-muted-foreground">
-              Loading {hostOf(url)}…
-            </p>
-          </div>
-        </div>
-      )}
-      <iframe
-        key={`${url}-${attempt}`}
-        src={proxiedSrc}
-        title={hostOf(url)}
-        className={`h-full min-h-[60vh] w-full border-0 bg-background transition-opacity ${
-          loaded ? "opacity-100" : "opacity-0"
-        }`}
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-        referrerPolicy="no-referrer-when-downgrade"
-        onLoad={() => {
-          setLoaded(true);
-          onLoaded();
-        }}
-      />
-      {loaded && showChip && (
-        <div className="absolute bottom-3 right-3 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
-          <ShieldCheck className="size-3.5" />
-          <span className="hidden sm:inline">Opened through Freman’s proxy</span>
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 transition-colors hover:text-foreground"
-          >
-            Open original
-            <ExternalLink className="size-3" />
-          </a>
-          <button
-            aria-label="Dismiss"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => setShowChip(false)}
-          >
-            <X className="size-3" />
-          </button>
-        </div>
-      )}
-      {slow && !loaded && (
-        <div className="absolute bottom-3 right-3 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
-          Still loading — some sites are slow through the proxy.
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 transition-colors hover:text-foreground"
-          >
-            Open directly
-            <ExternalLink className="size-3" />
-          </a>
-        </div>
-      )}
+      {!loaded && loadingOverlay}
+      {iframe}
+      {proxyChip}
+      {slowChip}
     </div>
   );
 }

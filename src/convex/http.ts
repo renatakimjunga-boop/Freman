@@ -24,6 +24,12 @@ const PASSTHROUGH_HEADERS = [
   "content-language",
 ];
 
+/** Real browser user-agents — mobile mode rewrites pages like a phone would see them. */
+const UA_DESKTOP =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+const UA_MOBILE =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+
 function rewriteHtml(html: string, baseUrl: string): string {
   const absolutize = (value: string): string => {
     try {
@@ -95,7 +101,9 @@ function rewriteHtml(html: string, baseUrl: string): string {
 }
 
 export const fetchProxy = httpAction(async (ctx, request) => {
-  const url = new URL(request.url).searchParams.get("url");
+  const params = new URL(request.url).searchParams;
+  const url = params.get("url");
+  const mobile = params.get("view") === "mobile";
   if (!url || !/^https?:\/\//i.test(url)) {
     return new Response("Missing or invalid ?url", { status: 400 });
   }
@@ -105,8 +113,7 @@ export const fetchProxy = httpAction(async (ctx, request) => {
     upstream = await fetch(url, {
       redirect: "follow",
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "User-Agent": mobile ? UA_MOBILE : UA_DESKTOP,
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",

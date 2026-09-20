@@ -107,6 +107,7 @@ const schema = defineSchema(
       saveHistory: v.boolean(),
       homepage: v.string(),
       resultsPerPage: v.union(v.literal("10"), v.literal("20"), v.literal("30")),
+      defaultView: v.union(v.literal("desktop"), v.literal("mobile")),
       updatedAt: v.number(),
     })
       .index("by_user", ["userId"])

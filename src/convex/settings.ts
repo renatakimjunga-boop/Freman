@@ -14,6 +14,7 @@ export const DEFAULTS = {
   saveHistory: true,
   homepage: "freman://home",
   resultsPerPage: "10" as const,
+  defaultView: "desktop" as const,
 };
 
 export type BrowserSettings = typeof DEFAULTS;
@@ -47,6 +48,9 @@ export const update = mutation({
     homepage: v.optional(v.string()),
     resultsPerPage: v.optional(
       v.union(v.literal("10"), v.literal("20"), v.literal("30")),
+    ),
+    defaultView: v.optional(
+      v.union(v.literal("desktop"), v.literal("mobile")),
     ),
   },
   handler: async (ctx, patch) => {
