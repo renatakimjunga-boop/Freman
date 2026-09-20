@@ -45,13 +45,35 @@ const schema = defineSchema(
       .index("by_user_sample", ["userId", "sampleId"]),
 
     // Web3 wallet accounts held by the browser's built-in wallet.
+    // Custodial: the private key is generated server-side and stored
+    // AES-256-GCM encrypted. Rows created before the custodial upgrade have
+    // no key material and are receive-only.
     walletAccounts: defineTable({
       userId: v.id("users"),
-      address: v.string(), // 0x-prefixed 20-byte hex address
+      address: v.string(), // 0x-prefixed checksummed address
       label: v.string(),
       isPrimary: v.boolean(),
+      encryptedPrivateKey: v.optional(v.string()), // v2:iv:tag:ciphertext (hex)
       createdAt: v.number(),
     }).index("by_user", ["userId"]),
+
+    // On-chain transactions sent from custodial accounts.
+    walletTransactions: defineTable({
+      userId: v.id("users"),
+      accountId: v.id("walletAccounts"),
+      hash: v.string(),
+      from: v.string(),
+      to: v.string(),
+      valueWei: v.string(),
+      chainId: v.number(),
+      chain: v.string(), // "sepolia" | "mainnet"
+      status: v.string(), // pending | confirmed | failed
+      blockNumber: v.optional(v.number()),
+      gasUsedWei: v.optional(v.string()),
+      createdAt: v.number(),
+    })
+      .index("by_user", ["userId"])
+      .index("by_account", ["accountId"]),
 
     // Active dApp sessions granted access to a wallet account.
     dappConnections: defineTable({

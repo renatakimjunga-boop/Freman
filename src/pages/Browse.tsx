@@ -1859,7 +1859,24 @@ function WalletPopover() {
   const navigate = useNavigate();
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
   const connections = useQuery(api.wallet.listConnections) ?? [];
+  const getBalance = useAction(api.custodialWallet.getBalance);
   const primary = accounts.find((a) => a.isPrimary) ?? accounts[0];
+  const [balance, setBalance] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!primary) return;
+    let cancelled = false;
+    getBalance({ address: primary.address, chain: "sepolia" })
+      .then((res) => {
+        if (!cancelled) setBalance(Number(res.balanceEth).toFixed(5));
+      })
+      .catch(() => {
+        if (!cancelled) setBalance(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [primary, getBalance]);
 
   return (
     <Popover>
@@ -1899,6 +1916,10 @@ function WalletPopover() {
               {shorten(primary.address)}
               <Copy className="size-3" />
             </button>
+            <p className="mt-3 font-mono text-lg">
+              {balance === null ? "…" : balance + " ETH"}
+            </p>
+            <p className="text-[11px] text-muted-foreground">Live balance · Sepolia testnet</p>
             <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
               {connections.length} active dApp session
               {connections.length === 1 ? "" : "s"}
@@ -1909,15 +1930,15 @@ function WalletPopover() {
               className="mt-3 w-full rounded-full"
               onClick={() => navigate("/dashboard")}
             >
-              Manage in Studio
+              Send & manage in Studio
             </Button>
           </>
         ) : (
           <>
             <p className="text-sm font-medium">No wallet yet</p>
             <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-              Create an account in the Studio to start connecting dApps and
-              signing.
+              Create a custodial account in the Studio — Freman generates a real
+              keypair and encrypts the private key before storing.
             </p>
             <Button
               variant="outline"

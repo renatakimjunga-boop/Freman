@@ -19,7 +19,7 @@ import {
   EXTENSION_SAMPLES,
 } from "@/lib/extension-samples";
 import { DAPPS } from "@/lib/dapps";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowUpRight,
@@ -43,7 +43,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
@@ -397,33 +397,64 @@ function shorten(address: string) {
 function Web3Section() {
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
   const connections = useQuery(api.wallet.listConnections) ?? [];
-  const createAccount = useMutation(api.wallet.createAccount);
+  const transactions = useQuery(api.transactions.list) ?? [];
+  const createCustodial = useAction(api.custodialWallet.createCustodialAccount);
   const removeAccount = useMutation(api.wallet.removeAccount);
   const setPrimary = useMutation(api.wallet.setPrimary);
   const connectDapp = useMutation(api.wallet.connectDapp);
   const disconnectDapp = useMutation(api.wallet.disconnectDapp);
-
-  const [newLabel, setNewLabel] = useState("");
+  const [network, setNetwork] = useState<"sepolia" | "mainnet">("sepolia");
+  const [sendTarget, setSendTarget] = useState<Doc<"walletAccounts"> | null>(null);
 
   const connectionByOrigin = useMemo(
     () => new Map(connections.map((c) => [c.origin, c])),
     [connections],
   );
   const activeAccount = accounts.find((a) => a.isPrimary) ?? accounts[0];
-
-  const copyAddress = (address: string) => {
-    navigator.clipboard
-      .writeText(address)
-      .then(() => toast.success("Address copied"))
-      .catch(() => toast.error("Copy failed"));
-  };
+  const recentTxs = useMemo(
+    () =>
+      [...transactions]
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 6),
+    [transactions],
+  );
 
   return (
     <div className="flex flex-col gap-10">
       <SectionHeading
         title="Web3 Wallet"
-        description="Freman's built-in wallet speaks EIP-1193. Create accounts, choose a primary, and review every dApp session."
+        description="A real custodial wallet — Freman generates each keypair server-side and stores the private key AES-256-GCM encrypted. Balances are live on-chain; sends are signed and broadcast for real."
       />
+
+      {/* Network switch */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="inline-flex overflow-hidden rounded-lg border border-border">
+          {(
+            [
+              ["sepolia", "Sepolia testnet"],
+              ["mainnet", "Ethereum mainnet"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setNetwork(id)}
+              className={`px-4 py-1.5 text-xs transition-colors ${
+                network === id
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {network === "mainnet" && (
+          <p className="flex items-center gap-2 text-xs text-red-500">
+            <span className="size-1.5 rounded-full bg-red-500" />
+            Mainnet moves real funds — test with Sepolia first.
+          </p>
+        )}
+      </div>
 
       {/* Accounts */}
       <div>
@@ -431,92 +462,111 @@ function Web3Section() {
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
             Accounts
           </p>
-          <div className="flex items-center gap-2">
-            <Input
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              placeholder="Account label"
-              className="h-9 w-40 text-xs"
-            />
-            <Button
-              size="sm"
-              className="h-9 rounded-full px-4 text-xs"
-              onClick={() =>
-                createAccount({ label: newLabel })
-                  .then(() => {
-                    setNewLabel("");
-                    toast.success("Account created");
-                  })
-                  .catch(() => toast.error("Could not create account"))
-              }
-            >
-              Create account
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            className="h-9 rounded-full px-4 text-xs"
+            onClick={() =>
+              createCustodial({ label: "" })
+                .then(() => toast.success("Custodial account created — key encrypted at rest"))
+                .catch(() => toast.error("Could not create account"))
+            }
+          >
+            Create custodial account
+          </Button>
         </div>
 
         {accounts.length === 0 ? (
           <div className="mt-4 rounded-xl border border-dashed border-border px-6 py-10 text-center">
             <p className="text-sm text-muted-foreground">
-              No accounts yet. Create one to start connecting dApps.
+              No accounts yet. Create one to get a real on-chain address.
             </p>
           </div>
         ) : (
           <div className="mt-4 overflow-hidden rounded-xl border border-border">
             {accounts.map((account: Doc<"walletAccounts">, i: number) => (
-              <div
+              <WalletAccountRow
                 key={account._id}
-                className={`flex flex-wrap items-center gap-3 px-5 py-3.5 ${
-                  i > 0 ? "border-t border-border" : ""
-                }`}
-              >
-                <span
-                  className={`size-1.5 shrink-0 rounded-full ${
-                    account.isPrimary ? "bg-red-500" : "bg-border"
-                  }`}
-                />
-                <span className="text-sm font-medium">{account.label}</span>
-                <button
-                  onClick={() => copyAddress(account.address)}
-                  className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
-                  title="Copy address"
-                >
-                  {shorten(account.address)}
-                  <Copy className="size-3" />
-                </button>
-                <div className="ml-auto flex items-center gap-1">
-                  {!account.isPrimary && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 text-xs text-muted-foreground hover:text-foreground"
-                      onClick={() =>
-                        setPrimary({ accountId: account._id })
-                          .then(() => toast.success(`${account.label} is now primary`))
-                          .catch(() => toast.error("Could not set primary"))
-                      }
-                    >
-                      Make primary
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-8 text-muted-foreground hover:text-destructive"
-                    onClick={() =>
-                      removeAccount({ accountId: account._id })
-                        .then(() => toast.success("Account removed"))
-                        .catch(() => toast.error("Could not remove account"))
-                    }
-                  >
-                    <X className="size-3.5" />
-                  </Button>
-                </div>
-              </div>
+                account={account}
+                isFirst={i === 0}
+                network={network}
+                onSend={() => setSendTarget(account)}
+                onRemove={() =>
+                  removeAccount({ accountId: account._id })
+                    .then(() => toast.success("Account removed"))
+                    .catch(() => toast.error("Could not remove account"))
+                }
+                onMakePrimary={() =>
+                  setPrimary({ accountId: account._id })
+                    .then(() => toast.success(`${account.label} is now primary`))
+                    .catch(() => toast.error("Could not set primary"))
+                }
+              />
             ))}
           </div>
         )}
       </div>
+
+      {/* Send dialog */}
+      {sendTarget && (
+        <SendDialog
+          account={sendTarget}
+          network={network}
+          onClose={() => setSendTarget(null)}
+        />
+      )}
+
+      {/* Recent on-chain activity */}
+      {recentTxs.length > 0 && (
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            Recent on-chain activity
+          </p>
+          <div className="mt-4 overflow-hidden rounded-xl border border-border">
+            {recentTxs.map((tx, i) => (
+              <div
+                key={tx._id}
+                className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 ${
+                  i > 0 ? "border-t border-border" : ""
+                }`}
+              >
+                <a
+                  href={
+                    tx.chain === "mainnet"
+                      ? `https://etherscan.io/tx/${tx.hash}`
+                      : `https://sepolia.etherscan.io/tx/${tx.hash}`
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-xs text-foreground hover:underline"
+                >
+                  {tx.hash.slice(0, 10)}…{tx.hash.slice(-6)}
+                </a>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {shorten(tx.to)}
+                </span>
+                <Badge
+                  variant="outline"
+                  className={`rounded-full font-normal ${
+                    tx.status === "confirmed"
+                      ? "text-foreground"
+                      : tx.status === "failed"
+                        ? "text-red-500"
+                        : "text-muted-foreground"
+                  }`}
+                >
+                  {tx.status}
+                </Badge>
+                <span className="font-mono text-xs">
+                  {(Number(BigInt(tx.valueWei)) / 1e18).toFixed(5)} ETH
+                </span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {tx.chain === "mainnet" ? "Mainnet" : "Sepolia"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* dApp sessions */}
       <div>
@@ -813,6 +863,274 @@ function SourceSection() {
         <p className="mt-2 font-mono text-[10px] text-muted-foreground">
           tree 85e50f9e8eeb9f19e06e8802987f8989b58fcde3
         </p>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------- custodial wallet ---------------------------- */
+
+/** One account row with a live on-chain balance. */
+function WalletAccountRow({
+  account,
+  isFirst,
+  network,
+  onSend,
+  onRemove,
+  onMakePrimary,
+}: {
+  account: Doc<"walletAccounts">;
+  isFirst: boolean;
+  network: "sepolia" | "mainnet";
+  onSend: () => void;
+  onRemove: () => void;
+  onMakePrimary: () => void;
+}) {
+  const getBalance = useAction(api.custodialWallet.getBalance);
+  const [balance, setBalance] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    getBalance({ address: account.address, chain: network })
+      .then((res) => {
+        if (!cancelled) {
+          setBalance(Number(res.balanceEth).toFixed(5));
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError(true);
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account.address, network, getBalance]);
+
+  const copyAddress = (address: string) => {
+    navigator.clipboard
+      .writeText(address)
+      .then(() => toast.success("Address copied"))
+      .catch(() => toast.error("Copy failed"));
+  };
+
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-3 px-5 py-3.5 ${
+        isFirst ? "" : "border-t border-border"
+      }`}
+    >
+      <span
+        className={`size-1.5 shrink-0 rounded-full ${
+          account.isPrimary ? "bg-red-500" : "bg-border"
+        }`}
+      />
+      <span className="text-sm font-medium">{account.label}</span>
+      <button
+        onClick={() => copyAddress(account.address)}
+        className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+        title="Copy address"
+      >
+        {shorten(account.address)}
+        <Copy className="size-3" />
+      </button>
+      {!account.encryptedPrivateKey && (
+        <Badge
+          variant="outline"
+          className="rounded-full font-normal text-muted-foreground"
+        >
+          legacy — receive only
+        </Badge>
+      )}
+      <span className="ml-auto font-mono text-sm">
+        {loading
+          ? "…"
+          : error
+            ? "—"
+            : `${balance} ETH`}
+      </span>
+      <div className="flex items-center gap-1">
+        {account.encryptedPrivateKey && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs text-muted-foreground hover:text-foreground"
+            onClick={onSend}
+          >
+            Send
+          </Button>
+        )}
+        {!account.isPrimary && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs text-muted-foreground hover:text-foreground"
+            onClick={onMakePrimary}
+          >
+            Make primary
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground hover:text-destructive"
+          onClick={onRemove}
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Send dialog: real signed broadcast through the custodial backend. */
+function SendDialog({
+  account,
+  network,
+  onClose,
+}: {
+  account: Doc<"walletAccounts">;
+  network: "sepolia" | "mainnet";
+  onClose: () => void;
+}) {
+  const sendTransaction = useAction(api.custodialWallet.sendTransaction);
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{
+    hash: string;
+    explorerUrl: string;
+    status: string;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const valid = /^0x[0-9a-fA-F]{40}$/.test(to) && Number(amount) > 0;
+  const isMainnet = network === "mainnet";
+
+  function submit() {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError(null);
+    sendTransaction({
+      accountId: account._id,
+      to,
+      amountEth: amount,
+      chain: network,
+      confirmed: isMainnet,
+    })
+      .then((res) => {
+        setResult(res);
+        toast.success(
+          res.status === "confirmed"
+            ? "Transaction confirmed on-chain"
+            : "Transaction broadcast",
+        );
+      })
+      .catch((err) => {
+        setError(
+          err instanceof Error ? err.message : "Transaction failed",
+        );
+      })
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <div className="rounded-xl border border-border">
+      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+        <p className="text-sm font-medium">
+          Send from {account.label}
+        </p>
+        <button
+          onClick={onClose}
+          className="text-muted-foreground transition-colors hover:text-foreground"
+          aria-label="Close"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="flex flex-col gap-4 px-5 py-5">
+        {result ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm">
+              Broadcast {result.status} · {(Number(amount) || 0).toString()} ETH →{" "}
+              <span className="font-mono text-xs text-muted-foreground">
+                {shorten(to || "")}
+              </span>
+            </p>
+            <a
+              href={result.explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {result.hash.slice(0, 18)}…{result.hash.slice(-8)}
+              <ExternalLink className="size-3" />
+            </a>
+            <Button
+              variant="outline"
+              size="sm"
+              className="self-start rounded-full px-4 text-xs"
+              onClick={onClose}
+            >
+              Done
+            </Button>
+          </div>
+        ) : (
+          <>
+            {isMainnet && (
+              <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-xs leading-5 text-red-500">
+                You're sending real ETH on Ethereum mainnet. This is
+                irreversible. Freman signs and broadcasts it immediately.
+              </p>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                Recipient
+              </label>
+              <Input
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                placeholder="0x…"
+                className="h-9 font-mono text-xs"
+                spellCheck={false}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                Amount (ETH)
+              </label>
+              <Input
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.001"
+                className="h-9 font-mono text-xs"
+                inputMode="decimal"
+              />
+            </div>
+            {error && (
+              <p className="text-xs text-red-500">{error}</p>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {network === "sepolia" ? "Sepolia testnet" : "Ethereum mainnet"}
+              </span>
+              <Button
+                size="sm"
+                className="rounded-full px-5 text-xs"
+                disabled={!valid || busy}
+                onClick={submit}
+              >
+                {busy ? "Signing…" : "Sign & send"}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

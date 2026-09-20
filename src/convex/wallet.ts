@@ -25,6 +25,21 @@ export const listAccounts = query({
   },
 });
 
+/**
+ * Internal: hand the encrypted key material to the custodial signing action,
+ * only for accounts owned by the caller. Never exposed to the client.
+ */
+export const getForSigning = query({
+  args: { accountId: v.id("walletAccounts") },
+  handler: async (ctx, { accountId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) return null;
+    const account = await ctx.db.get(accountId);
+    if (!account || account.userId !== userId) return null;
+    return account;
+  },
+});
+
 /** Active dApp sessions for the signed-in user. */
 export const listConnections = query({
   args: {},
@@ -35,6 +50,36 @@ export const listConnections = query({
       .query("dappConnections")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
+  },
+});
+
+/**
+ * Insert a custodial account created by the signing action (real keypair,
+ * private key already encrypted). First account becomes primary.
+ */
+export const insertCustodial = mutation({
+  args: {
+    label: v.string(),
+    address: v.string(),
+    encryptedPrivateKey: v.string(),
+  },
+  handler: async (ctx, { label, address, encryptedPrivateKey }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Not signed in");
+
+    const accounts = await ctx.db
+      .query("walletAccounts")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    return await ctx.db.insert("walletAccounts", {
+      userId,
+      address,
+      label: label.trim() || `Account ${accounts.length + 1}`,
+      isPrimary: accounts.length === 0,
+      encryptedPrivateKey,
+      createdAt: Date.now(),
+    });
   },
 });
 
