@@ -1,9 +1,10 @@
 import { Toaster } from "@/components/ui/sonner";
 import { api } from "@/convex/_generated/api";
 import { RequireAuth } from "@/components/RequireAuth";
+import { useAuth } from "@/hooks/use-auth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
-import { ConvexReactClient, useConvexAuth, useQuery } from "convex/react";
+import { ConvexReactClient, useQuery } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
@@ -18,7 +19,7 @@ const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 /** Applies the user's browser theme (light/dark/system) globally in real time. */
 function ThemeSync() {
-  const { isAuthenticated } = useConvexAuth();
+  const { isAuthenticated } = useAuth();
   const settings = useQuery(api.settings.get);
   const theme = isAuthenticated ? (settings?.theme ?? "light") : "light";
 
