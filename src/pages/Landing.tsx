@@ -52,7 +52,7 @@ function BrowserMock() {
           <span className="size-2.5 rounded-full border border-foreground/40" />
         </div>
         <div className="mx-auto flex w-full max-w-xs items-center justify-center rounded-md border border-border px-3 py-1 font-mono text-[11px] text-muted-foreground">
-          freman://studio
+          freman://search?q=web3+browser
         </div>
         <div className="w-10" />
       </div>
@@ -214,21 +214,21 @@ export default function Landing() {
         <section className="mx-auto w-full max-w-6xl px-6 pb-24 pt-20 sm:pt-28">
           <div className="grid items-center gap-16 lg:grid-cols-[1.1fr_1fr]">
             <Reveal>
-              <Eyebrow>Web3 browser · Extensions · For everyone</Eyebrow>
+              <Eyebrow>Web3 browser · Search engine · For everyone</Eyebrow>
               <h1 className="mt-6 text-5xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
                 The Web3 browser,
                 <br />
                 for everyone.
               </h1>
               <p className="mt-6 max-w-md text-base leading-7 text-muted-foreground">
-                Freman pairs a searchable extension catalog with a wallet that
-                lives in the browser's core. Browse the web, install what you
-                need, and sign with confidence — no jargon required.
+                Freman ships a built-in, privacy-first search engine, a
+                searchable extension catalog, and a wallet that lives in the
+                browser's core. Search, install, sign — no jargon required.
               </p>
               <div className="mt-10 flex flex-wrap items-center gap-3">
                 <Button asChild size="lg" className="rounded-full px-7">
-                  <a href={studioHref}>
-                    Browse the catalog
+                  <a href="/browse">
+                    Open the browser
                     <ArrowRight className="ml-1 size-4" />
                   </a>
                 </Button>
@@ -431,12 +431,12 @@ export default function Landing() {
               Meet Freman.
             </h2>
             <p className="mx-auto mt-5 max-w-md text-sm leading-7 text-muted-foreground">
-              Open the Studio to browse the catalog, create a wallet and queue
-              your first build — all in one quiet place.
+              Open the browser to search the web, browse the catalog and create
+              a wallet — all in one quiet place.
             </p>
             <Button asChild size="lg" className="mt-10 rounded-full px-8">
-              <a href={studioHref}>
-                {isAuthenticated ? "Open Studio" : "Open Freman"}
+              <a href="/browse">
+                Open the browser
                 <ArrowRight className="ml-1 size-4" />
               </a>
             </Button>

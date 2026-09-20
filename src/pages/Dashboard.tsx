@@ -25,6 +25,7 @@ import {
   ArrowUpRight,
   BookOpen,
   Copy,
+  Globe,
   Hammer,
   LayoutGrid,
   LogOut,
@@ -34,7 +35,7 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
 const CHROMIUM_SRC = "https://chromium.googlesource.com/chromium/src";
@@ -89,6 +90,7 @@ function StatBlock({
 /* ------------------------------- Overview ------------------------------- */
 
 function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void }) {
+  const navigate = useNavigate();
   const installed = useQuery(api.extensions.listInstalled) ?? [];
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
   const connections = useQuery(api.wallet.listConnections) ?? [];
@@ -121,20 +123,19 @@ function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void })
             Ready
           </span>
         </div>
-        <div className="grid divide-border sm:grid-cols-3 sm:divide-x">
+        <div className="grid gap-px overflow-hidden rounded-b-xl bg-border sm:grid-cols-2 lg:grid-cols-4">
           {(
             [
-              ["extensions", "Catalog", "Browse and search the Freman extension catalog."],
-              ["web3", "Web3 Wallet", "Create accounts and review dApp sessions."],
-              ["builds", "Builds", "Queue Chromium builds for any channel."],
+              { key: "browse", title: "Browser", copy: "Search the web with Freman's built-in engine.", onClick: () => navigate("/browse") },
+              { key: "catalog", title: "Catalog", copy: "Browse and search the Freman extension catalog.", onClick: () => onNavigate("extensions") },
+              { key: "wallet", title: "Web3 Wallet", copy: "Create accounts and review dApp sessions.", onClick: () => onNavigate("web3") },
+              { key: "builds", title: "Builds", copy: "Queue Chromium builds for any channel.", onClick: () => onNavigate("builds") },
             ] as const
-          ).map(([id, title, copy], i) => (
+          ).map(({ key, title, copy, onClick }) => (
             <button
-              key={id}
-              onClick={() => onNavigate(id)}
-              className={`group px-5 py-5 text-left transition-colors hover:bg-muted/60 ${
-                i > 0 ? "border-t border-border sm:border-t-0" : ""
-              }`}
+              key={key}
+              onClick={onClick}
+              className="group bg-card px-5 py-5 text-left transition-colors hover:bg-muted/60"
             >
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 {title}
@@ -814,6 +815,13 @@ export default function Dashboard() {
           </p>
 
           <nav className="mt-10 flex flex-col">
+            <Link
+              to="/browse"
+              className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Globe className="size-4" />
+              Browser
+            </Link>
             {SECTIONS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -865,6 +873,12 @@ export default function Dashboard() {
               </Button>
             </div>
             <nav className="mt-6 flex gap-2 overflow-x-auto pb-1">
+              <Link
+                to="/browse"
+                className="shrink-0 rounded-full border border-border px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+              >
+                Browser
+              </Link>
               {SECTIONS.map(({ id, label }) => (
                 <button
                   key={id}
