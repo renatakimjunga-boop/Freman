@@ -916,7 +916,7 @@ function DappsSection() {
             </div>
           );
         })}
-        </div>
+      </div>
     </div>
   );
 }
