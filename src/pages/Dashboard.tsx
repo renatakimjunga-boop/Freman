@@ -2,6 +2,7 @@ import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
 import { BrowserMark } from "@/components/BrowserMark";
+import { FremanWordmark } from "@/components/FremanWordmark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +29,7 @@ import {
   LayoutGrid,
   LogOut,
   Puzzle,
+  Search,
   Wallet,
   X,
 } from "lucide-react";
@@ -98,7 +100,7 @@ function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void })
     <div className="flex flex-col gap-10">
       <SectionHeading
         title="Overview"
-        description="Your Axiom browser at a glance — extensions, wallet sessions and builds, all in one quiet place."
+        description="Your Freman workspace at a glance — the extension catalog, wallet sessions and builds in one quiet place."
       />
 
       <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
@@ -112,7 +114,7 @@ function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void })
         <div className="flex items-center gap-3 border-b border-border px-5 py-3">
           <BrowserMark className="size-4 text-muted-foreground" />
           <span className="font-mono text-xs text-muted-foreground">
-            axiom://studio — current profile
+            freman://studio — current profile
           </span>
           <span className="ml-auto flex items-center gap-1.5 text-xs">
             <span className="size-1.5 rounded-full bg-emerald-500" />
@@ -122,7 +124,7 @@ function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void })
         <div className="grid divide-border sm:grid-cols-3 sm:divide-x">
           {(
             [
-              ["extensions", "Extensions", "Install samples from the official repository."],
+              ["extensions", "Catalog", "Browse and search the Freman extension catalog."],
               ["web3", "Web3 Wallet", "Create accounts and review dApp sessions."],
               ["builds", "Builds", "Queue Chromium builds for any channel."],
             ] as const
@@ -187,40 +189,75 @@ function ExtensionsSection() {
   const setEnabled = useMutation(api.extensions.setEnabled);
 
   const [filter, setFilter] = useState<string>("All");
+  const [query, setQuery] = useState("");
 
   const bySampleId = useMemo(
     () => new Map((installed ?? []).map((e) => [e.sampleId, e])),
     [installed],
   );
 
-  const visible =
-    filter === "All"
-      ? EXTENSION_SAMPLES
-      : EXTENSION_SAMPLES.filter((s) => s.category === filter);
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return EXTENSION_SAMPLES.filter((sample) => {
+      const inCategory = filter === "All" || sample.category === filter;
+      if (!inCategory) return false;
+      if (!q) return true;
+      return [
+        sample.name,
+        sample.description,
+        sample.id,
+        sample.category,
+        ...sample.apis,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [filter, query]);
 
   return (
     <div className="flex flex-col gap-8">
       <SectionHeading
-        title="Extensions"
-        description="A curated catalog from chrome-extensions-samples, plus the Web3-native samples that ship with Axiom."
+        title="Catalog"
+        description="Browse and search the full Freman catalog — official Chrome samples next to the Web3-native extensions that ship with the browser."
       />
 
-      <div className="flex flex-wrap gap-2">
-        {["All", ...EXTENSION_CATEGORIES].map((category) => (
-          <button
-            key={category}
-            onClick={() => setFilter(category)}
-            className={`rounded-full border px-3.5 py-1.5 text-xs transition-colors ${
-              filter === category
-                ? "border-foreground bg-foreground text-background"
-                : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground"
-            }`}
-          >
-            {category}
-          </button>
-        ))}
+      <div className="flex flex-col gap-4">
+        <div className="relative max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name, API or category"
+            className="h-10 pl-9 text-sm"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {["All", ...EXTENSION_CATEGORIES].map((category) => (
+            <button
+              key={category}
+              onClick={() => setFilter(category)}
+              className={`rounded-full border px-3.5 py-1.5 text-xs transition-colors ${
+                filter === category
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+              }`}
+            >
+              {category}
+            </button>
+          ))}
+          <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+            {visible.length} of {EXTENSION_SAMPLES.length}
+          </span>
+        </div>
       </div>
 
+      {visible.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+          No extensions match “{query}”. Try a different name, API or
+          category.
+        </div>
+      ) : (
       <div className="grid gap-4 md:grid-cols-2">
         {visible.map((sample) => {
           const state = bySampleId.get(sample.id);
@@ -317,6 +354,7 @@ function ExtensionsSection() {
           );
         })}
       </div>
+      )}
     </div>
   );
 }
@@ -355,7 +393,7 @@ function Web3Section() {
     <div className="flex flex-col gap-10">
       <SectionHeading
         title="Web3 Wallet"
-        description="Axiom's built-in wallet speaks EIP-1193. Create accounts, choose a primary, and review every dApp session."
+        description="Freman's built-in wallet speaks EIP-1193. Create accounts, choose a primary, and review every dApp session."
       />
 
       {/* Accounts */}
@@ -572,7 +610,7 @@ function BuildsSection() {
     <div className="flex flex-col gap-8">
       <SectionHeading
         title="Builds"
-        description="Queue Chromium builds tracked against upstream. Pick a channel and platform — the Studio handles the rest."
+        description="Queue Freman builds tracked against upstream Chromium — pick a channel and platform, and the Studio handles the rest."
       />
 
       <div className="flex flex-wrap items-center gap-3">
@@ -674,7 +712,7 @@ function BuildsSection() {
 const SOURCE_LINKS = [
   {
     title: "Chromium source",
-    copy: "The full Chromium source tree — clone it and build Axiom's core your way.",
+    copy: "The full Chromium source tree — clone it and build Freman's core your way.",
     href: CHROMIUM_SRC,
   },
   {
@@ -697,7 +735,7 @@ function SourceSection() {
     <div className="flex flex-col gap-8">
       <SectionHeading
         title="Source & Docs"
-        description="Everything Axiom is built on is public. Clone the tree, read the docs, study the samples."
+        description="Everything Freman is built on is public. Clone the tree, read the docs, study the samples."
       />
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -768,11 +806,10 @@ export default function Dashboard() {
       <div className="mx-auto flex w-full max-w-6xl gap-12 px-6 py-10 lg:py-14">
         {/* Sidebar */}
         <aside className="hidden w-52 shrink-0 flex-col lg:flex">
-          <a href="/" className="flex items-center gap-2.5">
-            <BrowserMark className="size-6" />
-            <span className="text-sm font-semibold tracking-tight">Axiom</span>
+          <a href="/" aria-label="Freman home">
+            <FremanWordmark className="text-lg" />
           </a>
-          <p className="mt-1 pl-9 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
             Studio v145
           </p>
 
@@ -814,11 +851,8 @@ export default function Dashboard() {
           {/* Mobile header + nav */}
           <div className="lg:hidden">
             <div className="flex items-center justify-between">
-              <a href="/" className="flex items-center gap-2.5">
-                <BrowserMark className="size-6" />
-                <span className="text-sm font-semibold tracking-tight">
-                  Axiom
-                </span>
+              <a href="/" aria-label="Freman home">
+                <FremanWordmark className="text-lg" />
               </a>
               <Button
                 variant="ghost"

@@ -19,7 +19,7 @@ const SAMPLES_REPO =
 
 /**
  * A curated catalog drawn from the official chrome-extensions-samples
- * repository, plus the Web3-native samples that ship with Axiom.
+ * repository, plus the Web3-native samples that ship with Freman.
  */
 export const EXTENSION_SAMPLES: ExtensionSample[] = [
   {

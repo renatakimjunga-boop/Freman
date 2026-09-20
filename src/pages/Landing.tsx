@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { ArrowRight, ArrowUpRight, Copy } from "lucide-react";
 import { toast } from "sonner";
-import { BrowserMark } from "@/components/BrowserMark";
+import { FremanWordmark } from "@/components/FremanWordmark";
 import { Button } from "@/components/ui/button";
 import { EXTENSION_SAMPLES } from "@/lib/extension-samples";
 import { useAuth } from "@/hooks/use-auth";
@@ -52,14 +52,14 @@ function BrowserMock() {
           <span className="size-2.5 rounded-full border border-foreground/40" />
         </div>
         <div className="mx-auto flex w-full max-w-xs items-center justify-center rounded-md border border-border px-3 py-1 font-mono text-[11px] text-muted-foreground">
-          axiom://studio
+          freman://studio
         </div>
         <div className="w-10" />
       </div>
       {/* content */}
       <div className="grid grid-cols-[120px_1fr] gap-px bg-border sm:grid-cols-[160px_1fr]">
         <div className="flex flex-col gap-2 bg-card p-4">
-          {["Overview", "Extensions", "Wallet", "Builds"].map((item, i) => (
+          {["Overview", "Catalog", "Wallet", "Builds"].map((item, i) => (
             <div
               key={item}
               className={`rounded-md px-2.5 py-1.5 text-[11px] ${
@@ -141,8 +141,8 @@ function WalletMock() {
 function TerminalMock() {
   const lines = [
     "$ git clone https://chromium.googlesource.com/chromium/src",
-    "$ cd src && gn gen out/axiom",
-    "$ autoninja -C out/axiom chrome",
+    "$ cd src && gn gen out/freman",
+    "$ autoninja -C out/freman chrome",
     "✔ build ready — 145.0.7049.0",
   ];
   return (
@@ -162,18 +162,18 @@ function TerminalMock() {
 const FEATURE_INDEX = [
   {
     number: "01",
-    title: "Chromium core",
-    copy: "Built on the Chromium source tree — the same rendering engine, network stack and multi-process architecture that powers the web's default browser.",
+    title: "Built on Chromium",
+    copy: "Freman tracks the upstream Chromium source tree — the same rendering engine, network stack and security model the modern web expects.",
   },
   {
     number: "02",
-    title: "Extension platform",
-    copy: "Manifest V3 all the way down. Install samples straight from the official repository and ship your own service workers, side panels and DevTools tools.",
+    title: "A catalog, not a store",
+    copy: "Browse and search a curated catalog of extensions. Official Chrome samples sit alongside Web3-native tools, each installable in a click.",
   },
   {
     number: "03",
-    title: "Web3 native",
-    copy: "An EIP-1193 provider injected into every frame. Accounts, ENS resolution and sign-request guards are browser features — not bolt-ons.",
+    title: "Web3, built in",
+    copy: "An EIP-1193 wallet lives in the browser's core. Resolve .eth names in the address bar and read every signature request in plain language.",
   },
 ];
 
@@ -186,16 +186,15 @@ export default function Landing() {
       {/* Navigation */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
-          <a href="/" className="flex items-center gap-2.5">
-            <BrowserMark className="size-6" />
-            <span className="text-sm font-semibold tracking-tight">Axiom</span>
+          <a href="/" aria-label="Freman home">
+            <FremanWordmark className="text-lg" />
           </a>
           <nav className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
             <a href="#features" className="transition-colors hover:text-foreground">
               Features
             </a>
-            <a href="#samples" className="transition-colors hover:text-foreground">
-              Extensions
+            <a href="#catalog" className="transition-colors hover:text-foreground">
+              Catalog
             </a>
             <a href="#web3" className="transition-colors hover:text-foreground">
               Web3
@@ -215,21 +214,21 @@ export default function Landing() {
         <section className="mx-auto w-full max-w-6xl px-6 pb-24 pt-20 sm:pt-28">
           <div className="grid items-center gap-16 lg:grid-cols-[1.1fr_1fr]">
             <Reveal>
-              <Eyebrow>Chromium · Extensions · Web3</Eyebrow>
+              <Eyebrow>Web3 browser · Extensions · For everyone</Eyebrow>
               <h1 className="mt-6 text-5xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
-                The browser,
+                The Web3 browser,
                 <br />
-                distilled.
+                for everyone.
               </h1>
               <p className="mt-6 max-w-md text-base leading-7 text-muted-foreground">
-                Axiom is a Chromium-based browser with a first-class extension
-                platform and a wallet built into its core. Nothing you don't
-                need. Everything you do.
+                Freman pairs a searchable extension catalog with a wallet that
+                lives in the browser's core. Browse the web, install what you
+                need, and sign with confidence — no jargon required.
               </p>
               <div className="mt-10 flex flex-wrap items-center gap-3">
                 <Button asChild size="lg" className="rounded-full px-7">
                   <a href={studioHref}>
-                    {isAuthenticated ? "Open Studio" : "Start building"}
+                    Browse the catalog
                     <ArrowRight className="ml-1 size-4" />
                   </a>
                 </Button>
@@ -252,8 +251,8 @@ export default function Landing() {
           <div className="mx-auto grid w-full max-w-6xl grid-cols-2 divide-border px-6 sm:grid-cols-4 sm:divide-x">
             {[
               ["145", "Chromium baseline"],
-              ["12", "Extension samples"],
-              ["EIP-1193", "Native provider"],
+              ["12", "Catalog samples"],
+              ["EIP-1193", "Native wallet"],
               ["100%", "Open source"],
             ].map(([value, label], i) => (
               <Reveal
@@ -275,7 +274,7 @@ export default function Landing() {
         {/* Features */}
         <section id="features" className="mx-auto w-full max-w-6xl px-6 py-24 sm:py-32">
           <Reveal>
-            <Eyebrow>Why Axiom</Eyebrow>
+            <Eyebrow>Why Freman</Eyebrow>
             <h2 className="mt-5 max-w-xl text-3xl font-semibold tracking-tight sm:text-4xl">
               Three ideas, held together.
             </h2>
@@ -299,15 +298,20 @@ export default function Landing() {
           </div>
         </section>
 
-        {/* Extension samples index */}
-        <section id="samples" className="border-y border-border bg-muted/40">
+        {/* Extension catalog */}
+        <section id="catalog" className="border-y border-border bg-muted/40">
           <div className="mx-auto w-full max-w-6xl px-6 py-24 sm:py-32">
             <Reveal className="flex flex-wrap items-end justify-between gap-6">
               <div>
-                <Eyebrow>Extension platform</Eyebrow>
+                <Eyebrow>Extension catalog</Eyebrow>
                 <h2 className="mt-5 max-w-lg text-3xl font-semibold tracking-tight sm:text-4xl">
-                  Drawn from the official samples.
+                  Browse it. Search it. Install it.
                 </h2>
+                <p className="mt-4 max-w-md text-sm leading-6 text-muted-foreground">
+                  Every entry in the catalog is searchable by name, extension
+                  API or category — from the official samples to Freman's
+                  Web3-native tools.
+                </p>
               </div>
               <Button asChild variant="ghost" className="rounded-full">
                 <a href={SAMPLES_REPO} target="_blank" rel="noopener noreferrer">
@@ -339,7 +343,8 @@ export default function Landing() {
                 </div>
               ))}
               <div className="border-t border-border bg-muted/40 px-6 py-3 text-center text-xs text-muted-foreground">
-                + 6 more, incl. Web3-native samples — in the Studio
+                The full catalog — all {EXTENSION_SAMPLES.length} entries,
+                searchable — lives in the Studio
               </div>
             </Reveal>
           </div>
@@ -349,20 +354,20 @@ export default function Landing() {
         <section id="web3" className="mx-auto w-full max-w-6xl px-6 py-24 sm:py-32">
           <div className="grid items-center gap-16 lg:grid-cols-2">
             <Reveal>
-              <Eyebrow>Web3 native</Eyebrow>
+              <Eyebrow>Web3, built in</Eyebrow>
               <h2 className="mt-5 max-w-md text-3xl font-semibold tracking-tight sm:text-4xl">
-                The wallet is the browser.
+                The wallet is part of the browser.
               </h2>
               <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
-                No extensions to vet, no pop-ups to trust. Axiom ships an
-                EIP-1193 provider in its core, resolves .eth names in the
-                omnibox, and decodes every sign request before you approve it.
+                There's nothing to install and nothing to vet. Freman ships its
+                wallet in the core, so dApps get a provider they can rely on —
+                and you stay in control of every session.
               </p>
               <ul className="mt-8 space-y-3 text-sm text-muted-foreground">
                 {[
-                  "EIP-1193 provider injected into every frame",
-                  "Human-readable signature and transaction previews",
-                  "Per-origin dApp sessions you can revoke in one click",
+                  "EIP-1193 provider available to every page you open",
+                  "Plain-language previews for every signature request",
+                  "Per-origin dApp sessions, revocable in one click",
                 ].map((item) => (
                   <li key={item} className="flex items-start gap-3">
                     <span className="mt-[9px] size-1 shrink-0 rounded-full bg-foreground" />
@@ -386,8 +391,8 @@ export default function Landing() {
                 From source to binary.
               </h2>
               <p className="mt-6 max-w-md text-sm leading-7 text-muted-foreground">
-                Axiom tracks upstream Chromium. Queue a build for any channel
-                and platform from the Studio, or clone the tree and compile it
+                Freman tracks upstream Chromium. Queue a build for any channel
+                and platform from the Studio — or clone the tree and compile it
                 your way.
               </p>
               <div className="mt-8 flex items-center gap-2">
@@ -423,15 +428,15 @@ export default function Landing() {
         <section className="mx-auto w-full max-w-6xl px-6 py-28 sm:py-36">
           <Reveal className="text-center">
             <h2 className="mx-auto max-w-2xl text-4xl font-semibold tracking-tight sm:text-5xl">
-              Build your browser.
+              Meet Freman.
             </h2>
             <p className="mx-auto mt-5 max-w-md text-sm leading-7 text-muted-foreground">
-              Open the Studio to install extensions, connect dApps and queue
-              Chromium builds — all in one quiet place.
+              Open the Studio to browse the catalog, create a wallet and queue
+              your first build — all in one quiet place.
             </p>
             <Button asChild size="lg" className="mt-10 rounded-full px-8">
               <a href={studioHref}>
-                {isAuthenticated ? "Open Studio" : "Enter the Studio"}
+                {isAuthenticated ? "Open Studio" : "Open Freman"}
                 <ArrowRight className="ml-1 size-4" />
               </a>
             </Button>
@@ -443,9 +448,9 @@ export default function Landing() {
       <footer className="border-t border-border">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-12 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2.5">
-            <BrowserMark className="size-5 text-muted-foreground" />
+            <FremanWordmark className="text-sm" />
             <span className="text-sm text-muted-foreground">
-              Axiom — the browser, distilled.
+              — the Web3 browser for everyone.
             </span>
           </div>
           <nav className="flex flex-wrap gap-x-8 gap-y-2 text-sm text-muted-foreground">

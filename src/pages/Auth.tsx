@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/input-otp";
 
 import { useAuth } from "@/hooks/use-auth";
-import { BrowserMark } from "@/components/BrowserMark";
+import { FremanWordmark } from "@/components/FremanWordmark";
 import { ArrowRight, Loader2, Mail, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -126,12 +126,12 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       aria-label="Back to home"
                       onClick={() => navigate("/")}
                     >
-                      <BrowserMark className="mb-4 mt-4 size-12 text-foreground" />
+                      <FremanWordmark className="text-2xl" />
                     </button>
                   </div>
-                <CardTitle className="text-xl tracking-tight">Enter the Studio</CardTitle>
+                <CardTitle className="text-xl tracking-tight">Welcome to Freman</CardTitle>
                 <CardDescription>
-                  Sign in to build your browser — extensions, wallet and builds.
+                  Sign in to browse the catalog and make the browser yours.
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleEmailSubmit}>
