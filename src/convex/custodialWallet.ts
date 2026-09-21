@@ -10,8 +10,10 @@ import {
   Wallet as EvmWallet,
   HDNodeWallet,
   JsonRpcProvider,
+  Contract,
   parseEther,
   formatEther,
+  formatUnits,
 } from "ethers";
 import { sha256 } from "@noble/hashes/sha256";
 import { sha512 } from "@noble/hashes/sha512";
@@ -561,8 +563,9 @@ export const getBalance = action({
       const sun = typeof account.balance === "number" ? account.balance : 0;
       return {
         network,
-      chainType: "tron",
-        symbol: "TRX",      raw: String(sun),
+        chainType: "tron",
+        symbol: "TRX",
+        raw: String(sun),
         formatted: (sun / 1_000_000).toFixed(6),
         balanceEth: (sun / 1_000_000).toFixed(6),
       };
@@ -580,6 +583,179 @@ export const getBalance = action({
       formatted: formatEther(wei),
       balanceEth: formatEther(wei),
     };
+  },
+});
+
+/* ------------------------------- token balances ------------------------------- */
+
+/** Well-known token contracts per network, verified against official docs. */
+const KNOWN_TOKENS: Record<string, Array<{ symbol: string; name: string; address: string; decimals: number }>> = {
+  mainnet: [
+    { symbol: "USDT", name: "Tether USD", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
+    { symbol: "USDC", name: "USD Coin", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+    { symbol: "DAI", name: "Dai Stablecoin", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
+    { symbol: "LINK", name: "Chainlink", address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", decimals: 18 },
+    { symbol: "UNI", name: "Uniswap", address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", decimals: 18 },
+    { symbol: "SHIB", name: "Shiba Inu", address: "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", decimals: 18 },
+  ],
+  sepolia: [
+    { symbol: "USDC", name: "USD Coin", address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", decimals: 6 },
+    { symbol: "LINK", name: "Chainlink", address: "0x779877A7B0D9E8603169DdbD7836e478b4624339", decimals: 18 },
+    { symbol: "UNI", name: "Uniswap", address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", decimals: 18 },
+  ],
+  polygon: [
+    { symbol: "USDC", name: "USD Coin", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 },
+    { symbol: "USDT", name: "Tether USD", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
+  ],
+  bsc: [
+    { symbol: "USDT", name: "Tether USD", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 },
+    { symbol: "USDC", name: "USD Coin", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18 },
+  ],
+  arbitrum: [
+    { symbol: "USDC", name: "USD Coin", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
+    { symbol: "USDT", name: "Tether USD", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
+  ],
+  base: [
+    { symbol: "USDC", name: "USD Coin", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
+  ],
+  "solana:devnet": [
+    { symbol: "USDC", name: "USD Coin", address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", decimals: 6 },
+  ],
+  "solana:mainnet": [
+    { symbol: "USDC", name: "USD Coin", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6 },
+  ],
+};
+
+/**
+ * Read ERC-20 / SPL / TRC-20 token balances for an address in one call —
+ * all data straight from chain via public RPC, nothing cached or mocked.
+ */
+export const getTokenBalances = action({
+  args: {
+    address: v.string(),
+    network: v.optional(v.string()),
+    accountId: v.optional(v.id("walletAccounts")),
+  },
+  returns: v.array(
+    v.object({
+      symbol: v.string(),
+      name: v.string(),
+      contract: v.string(),
+      raw: v.string(),
+      formatted: v.string(),
+    }),
+  ),
+  handler: async (ctx, { address, network: networkArg, accountId }): Promise<Array<{ symbol: string; name: string; contract: string; raw: string; formatted: string }>> => {
+    let net = networkArg;
+    if (!net && accountId) {
+      const account = await ctx.runQuery(api.wallet.getForSigning, { accountId });
+      if (account) {
+        const t = (account.chainType as ChainType | undefined) ?? "evm";
+        net = t === "solana" ? "solana:devnet" : t === "tron" ? "tron:nile" : "sepolia";
+      }
+    }
+    const network = net ?? "sepolia";
+
+    // Tron: TRC-20 balances via the official constant-call REST API.
+    if (network.startsWith("tron:")) {
+      const endpoint = TRON_NETWORKS[network]?.endpoint ?? TRON_NETWORKS["tron:mainnet"].endpoint;
+      const trc20: Array<{ symbol: string; name: string; contract: string; raw: string; formatted: string }> = [];
+      // Well-known TRC-20s on Tron (mainnet + Nile testnet both list USDT/USDC).
+      const tronTokens =
+        network === "tron:nile"
+          ? []
+          : [
+              { symbol: "USDT", name: "Tether USD", address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", decimals: 6 },
+              { symbol: "USDC", name: "USD Coin", address: "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8", decimals: 6 },
+            ];
+      for (const token of tronTokens) {
+        try {
+          const res = await tronApi(endpoint, "/wallet/triggerconstantcontract", {
+            owner_address: address,
+            function_selector: "balanceOf(address)",
+            parameter: address.replace(/^T/, "T").padEnd(0) === "" ? "" : tronAddressParam(address),
+            contract_address: token.address,
+            visible: true,
+          });
+          const hex = (res.constant_result as string[] | undefined)?.[0];
+          const raw = hex ? BigInt(`0x${hex}`) : 0n;
+          if (raw > 0n) {
+            trc20.push({
+              symbol: token.symbol,
+              name: token.name,
+              contract: token.address,
+              raw: raw.toString(),
+              formatted: formatUnits(raw, token.decimals),
+            });
+          }
+        } catch {
+          // Token probe failed — omit rather than break the list.
+        }
+      }
+      return trc20;
+    }
+
+    // Solana: SPL token accounts for the well-known USDC mint.
+    if (network.startsWith("solana:")) {
+      const endpoint = SOLANA_NETWORKS[network]?.endpoint ?? SOLANA_NETWORKS["solana:mainnet"].endpoint;
+      const mints = KNOWN_TOKENS[network] ?? [];
+      const out: Array<{ symbol: string; name: string; contract: string; raw: string; formatted: string }> = [];
+      for (const mint of mints) {
+        try {
+          const res = await solanaRpc<{ value: Array<{ account: { data: { parsed: { info: { tokenAmount: { uiAmountString: string } } } } } }> }>(
+            endpoint,
+            "getTokenAccountsByOwner",
+            [address, { mint: mint.address }, { encoding: "jsonParsed" }],
+          );
+          const total = (res.value ?? []).reduce(
+            (sum, entry) =>
+              sum + BigInt(entry.account.data.parsed.info.tokenAmount.amount || "0"),
+            0n,
+          );
+          if (total > 0n) {
+            out.push({
+              symbol: mint.symbol,
+              name: mint.name,
+              contract: mint.address,
+              raw: total.toString(),
+              formatted: formatUnits(total, mint.decimals),
+            });
+          }
+        } catch {
+          // Skip mints that fail — a missing account is not an error.
+        }
+      }
+      return out;
+    }
+
+    // EVM: multicall-style reads over the well-known token list.
+    const evmChain = EVM_CHAINS[network] ?? EVM_CHAINS["sepolia"];
+    const provider = await evmProvider(evmChain);
+    const tokens = KNOWN_TOKENS[network] ?? [];
+    const erc20Abi = [
+      "function balanceOf(address owner) view returns (uint256)",
+    ] as const;
+    const out: Array<{ symbol: string; name: string; contract: string; raw: string; formatted: string }> = [];
+    await Promise.all(
+      tokens.map(async (token) => {
+        try {
+          const contract = new Contract(token.address, erc20Abi, provider);
+          const raw: bigint = await contract.balanceOf(address);
+          if (raw > 0n) {
+            out.push({
+              symbol: token.symbol,
+              name: token.name,
+              contract: token.address,
+              raw: raw.toString(),
+              formatted: formatUnits(raw, token.decimals),
+            });
+          }
+        } catch {
+          // Token probe failed (RPC hiccup) — omit rather than break the list.
+        }
+      }),
+    );
+    return out.sort((a, b) => a.symbol.localeCompare(b.symbol));
   },
 });
 

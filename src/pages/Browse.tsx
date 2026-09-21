@@ -2242,6 +2242,12 @@ function WalletPopover() {
   const getBalance = useAction(api.custodialWallet.getBalance);
   const primary = accounts.find((a) => a.isPrimary) ?? accounts[0];
   const [balance, setBalance] = useState<string | null>(null);
+  const networkLabel =
+    primary?.chainType === "solana"
+      ? "Solana Devnet"
+      : primary?.chainType === "tron"
+        ? "Tron Nile testnet"
+        : "Ethereum Sepolia testnet";
 
   useEffect(() => {
     if (!primary) return;
@@ -2308,9 +2314,9 @@ function WalletPopover() {
               <Copy className="size-3" />
             </button>
             <p className="mt-3 font-mono text-lg">
-              {balance === null ? "…" : balance + " ETH"}
+              {balance === null ? "…" : balance}
             </p>
-            <p className="text-[11px] text-muted-foreground">Live balance · Sepolia testnet</p>
+            <p className="text-[11px] text-muted-foreground">Live balance · {networkLabel}</p>
             <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
               {connections.length} active dApp session
               {connections.length === 1 ? "" : "s"}
