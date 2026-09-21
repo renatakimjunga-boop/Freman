@@ -626,6 +626,11 @@ const KNOWN_TOKENS: Record<string, Array<{ symbol: string; name: string; address
   ],
 };
 
+/** ABI-encode a Tron address (0x41-prefixed h160) as a 32-byte parameter. */
+function tronAddressParam(address: string): string {
+  return tronBase58ToHex(address).padStart(64, "0");
+}
+
 /**
  * Read ERC-20 / SPL / TRC-20 token balances for an address in one call —
  * all data straight from chain via public RPC, nothing cached or mocked.
@@ -673,7 +678,7 @@ export const getTokenBalances = action({
           const res = await tronApi(endpoint, "/wallet/triggerconstantcontract", {
             owner_address: address,
             function_selector: "balanceOf(address)",
-            parameter: address.replace(/^T/, "T").padEnd(0) === "" ? "" : tronAddressParam(address),
+            parameter: tronAddressParam(address),
             contract_address: token.address,
             visible: true,
           });
@@ -702,7 +707,19 @@ export const getTokenBalances = action({
       const out: Array<{ symbol: string; name: string; contract: string; raw: string; formatted: string }> = [];
       for (const mint of mints) {
         try {
-          const res = await solanaRpc<{ value: Array<{ account: { data: { parsed: { info: { tokenAmount: { uiAmountString: string } } } } } }> }>(
+          const res = await solanaRpc<{
+            value: Array<{
+              account: {
+                data: {
+                  parsed: {
+                    info: {
+                      tokenAmount: { uiAmountString: string; amount: string };
+                    };
+                  };
+                };
+              };
+            }>;
+          }>(
             endpoint,
             "getTokenAccountsByOwner",
             [address, { mint: mint.address }, { encoding: "jsonParsed" }],

@@ -1141,6 +1141,18 @@ function shorten(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+/** Trim long token decimals for display: 681961921687.14… → 681.96B. */
+function compactAmount(value: string): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  if (n === 0) return "0";
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
+  if (n >= 1) return n.toFixed(2);
+  return n.toPrecision(3);
+}
+
 function Web3Section() {
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
   const connections = useQuery(api.wallet.listConnections) ?? [];
@@ -1659,8 +1671,12 @@ function WalletAccountRow({
   onMakePrimary: () => void;
 }) {
   const getBalance = useAction(api.custodialWallet.getBalance);
+  const getTokenBalances = useAction(api.custodialWallet.getTokenBalances);
   const [balance, setBalance] = useState<string | null>(null);
   const [symbol, setSymbol] = useState("");
+  const [tokens, setTokens] = useState<
+    Array<{ symbol: string; formatted: string }>
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -1686,6 +1702,24 @@ function WalletAccountRow({
       cancelled = true;
     };
   }, [account.address, network, getBalance]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTokens([]);
+    getTokenBalances({ address: account.address, network })
+      .then((res) => {
+        if (!cancelled)
+          setTokens(
+            res.map((t) => ({ symbol: t.symbol, formatted: t.formatted })),
+          );
+      })
+      .catch(() => {
+        // Token list is best-effort; native balance already covers the row.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account.address, network, getTokenBalances]);
 
   const copyAddress = (address: string) => {
     navigator.clipboard
@@ -1737,6 +1771,19 @@ function WalletAccountRow({
             ? "—"
             : `${balance} ${symbol}`}
       </span>
+      {tokens.length > 0 && (
+        <div className="flex w-full flex-wrap items-center gap-1.5">
+          {tokens.map((t) => (
+            <span
+              key={t.symbol}
+              className="rounded-full border border-border bg-muted/40 px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+              title={`${t.formatted} ${t.symbol}`}
+            >
+              {t.symbol} {compactAmount(t.formatted)}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex items-center gap-1">
         {account.encryptedPrivateKey && (
           <Button

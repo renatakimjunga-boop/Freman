@@ -148,6 +148,18 @@ function shorten(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+/** Trim long token decimals for display: 681961921687.14… → 681.96B. */
+function compactAmount(value: string): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  if (n === 0) return '0';
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
+  if (n >= 1) return n.toFixed(2);
+  return n.toPrecision(3);
+}
+
 function normalizeUrl(raw: string): string {
   return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 }
@@ -2240,8 +2252,12 @@ function WalletPopover() {
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
   const connections = useQuery(api.wallet.listConnections) ?? [];
   const getBalance = useAction(api.custodialWallet.getBalance);
+  const getTokenBalances = useAction(api.custodialWallet.getTokenBalances);
   const primary = accounts.find((a) => a.isPrimary) ?? accounts[0];
   const [balance, setBalance] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<
+    Array<{ symbol: string; formatted: string }>
+  >([]);
   const networkLabel =
     primary?.chainType === "solana"
       ? "Solana Devnet"
@@ -2274,6 +2290,33 @@ function WalletPopover() {
       cancelled = true;
     };
   }, [primary, getBalance]);
+
+  useEffect(() => {
+    if (!primary) return;
+    let cancelled = false;
+    setTokens([]);
+    const family =
+      primary.chainType === 'solana' || primary.chainType === 'tron'
+        ? primary.chainType
+        : 'evm';
+    const network =
+      family === 'solana'
+        ? 'solana:devnet'
+        : family === 'tron'
+          ? 'tron:nile'
+          : 'sepolia';
+    getTokenBalances({ address: primary.address, network })
+      .then((res) => {
+        if (!cancelled)
+          setTokens(res.map((t) => ({ symbol: t.symbol, formatted: t.formatted })));
+      })
+      .catch(() => {
+        // Best-effort — native balance already shown.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [primary, getTokenBalances]);
 
   return (
     <Popover>
@@ -2317,6 +2360,19 @@ function WalletPopover() {
               {balance === null ? "…" : balance}
             </p>
             <p className="text-[11px] text-muted-foreground">Live balance · {networkLabel}</p>
+            {tokens.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {tokens.map((t) => (
+                  <span
+                    key={t.symbol}
+                    className="rounded-full border border-border bg-muted/40 px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                    title={`${t.formatted} ${t.symbol}`}
+                  >
+                    {t.symbol} {compactAmount(t.formatted)}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground">
               {connections.length} active dApp session
               {connections.length === 1 ? "" : "s"}
