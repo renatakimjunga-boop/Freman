@@ -2246,9 +2246,20 @@ function WalletPopover() {
   useEffect(() => {
     if (!primary) return;
     let cancelled = false;
-    getBalance({ address: primary.address, chain: "sepolia" })
+    const family =
+      primary.chainType === "solana" || primary.chainType === "tron"
+        ? primary.chainType
+        : "evm";
+    const network =
+      family === "solana"
+        ? "solana:devnet"
+        : family === "tron"
+          ? "tron:nile"
+          : "sepolia";
+    getBalance({ address: primary.address, network })
       .then((res) => {
-        if (!cancelled) setBalance(Number(res.balanceEth).toFixed(5));
+        if (!cancelled)
+          setBalance(`${Number(res.formatted).toFixed(5)} ${res.symbol}`);
       })
       .catch(() => {
         if (!cancelled) setBalance(null);
