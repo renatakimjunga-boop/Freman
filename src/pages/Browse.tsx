@@ -2,6 +2,7 @@ import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/hooks/use-auth";
 import { FremanWordmark } from "@/components/FremanWordmark";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -46,6 +47,7 @@ import {
   ShieldCheck,
   Smartphone,
   Star,
+  Store,
   Sun,
   Trash2,
   Video,
@@ -117,7 +119,11 @@ interface SettingsNav {
   kind: "settings";
 }
 
-type Nav = SearchNav | SiteNav | HomeNav | SettingsNav;
+interface StoreNav {
+  kind: "store";
+}
+
+type Nav = SearchNav | SiteNav | HomeNav | SettingsNav | StoreNav;
 
 interface Tab {
   id: string;
@@ -170,6 +176,7 @@ function navDisplay(nav: Nav | undefined): string {
   if (!nav) return "";
   if (nav.kind === "site") return nav.url;
   if (nav.kind === "settings") return "freman://settings";
+  if (nav.kind === "store") return "freman://store";
   if (nav.kind === "search") return nav.query;
   return "";
 }
@@ -177,6 +184,7 @@ function navDisplay(nav: Nav | undefined): string {
 function navTitle(nav: Nav): string {
   if (nav.kind === "home") return "New Tab";
   if (nav.kind === "settings") return "Settings";
+  if (nav.kind === "store") return "Chrome Web Store";
   if (nav.kind === "site") return hostOf(nav.url);
   return nav.query;
 }
@@ -395,6 +403,8 @@ export default function Browse() {
     const tabId = activeTab.id;
     if (raw === "freman://settings") {
       pushNav(tabId, { kind: "settings" });
+    } else if (raw === "freman://store") {
+      pushNav(tabId, { kind: "store" });
     } else if (raw === "freman://home") {
       pushNav(tabId, { kind: "home" });
     } else if (ETH_RE.test(raw) || ADDRESS_RE.test(raw) || !URL_RE.test(raw)) {
@@ -822,6 +832,13 @@ export default function Browse() {
               })
             )}
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => pushNav(activeTab.id, { kind: "store" })}
+              className="gap-2"
+            >
+              <Store className="size-4" />
+              Browse the Chrome Web Store
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => navigate("/dashboard")}>
               Manage extensions
             </DropdownMenuItem>
@@ -829,6 +846,17 @@ export default function Browse() {
         </DropdownMenu>
 
         {walletInstalled && <WalletPopover />}
+
+        {/* Store */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hidden size-8 text-muted-foreground hover:text-foreground sm:inline-flex"
+          title="Chrome Web Store"
+          onClick={() => pushNav(activeTab.id, { kind: "store" })}
+        >
+          <Store className="size-4" />
+        </Button>
 
         {/* Profile */}
         <DropdownMenu>
@@ -1088,6 +1116,8 @@ export default function Browse() {
             onNavigate={openInTab}
             onGoHome={() => pushNav(activeTab.id, { kind: "home" })}
           />
+        ) : current.kind === "store" ? (
+          <StorePage onNavigate={openInTab} />
         ) : current.kind === "site" ? (
           <SiteView
             url={current.url}
@@ -1725,6 +1755,213 @@ function SiteView({
       {iframe}
       {proxyChip}
       {slowChip}
+    </div>
+  );
+}
+
+/* --------------------------- chrome web store ---------------------------- */
+
+interface StoreCard {
+  id: string;
+  name: string;
+  publisher: string | null;
+  rating: number | null;
+  icon: string | null;
+  url: string;
+}
+
+const STORE_DEFAULT_QUERIES = [
+  "web3 wallet",
+  "blockchain",
+  "nft",
+  "crypto",
+  "defi",
+];
+
+function StorePage({ onNavigate }: { onNavigate: (url: string) => void }) {
+  const searchStore = useAction(api.webstore.search);
+
+  const [query, setQuery] = useState("");
+  const [term, setTerm] = useState<string | null>(null);
+  const [results, setResults] = useState<StoreCard[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
+    "idle",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const run = (q: string) => {
+    setTerm(q);
+    setStatus("loading");
+    setError(null);
+    searchStore({ query: q, limit: 18 })
+      .then((res) => {
+        setResults((res as { results: StoreCard[] }).results);
+        setStatus("done");
+      })
+      .catch((e: unknown) => {
+        setError(
+          e instanceof Error ? e.message : "Could not reach the Chrome Web Store",
+        );
+        setStatus("error");
+      });
+  };
+
+  useEffect(() => {
+    run("web3 wallet");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="w-full px-4 py-8 sm:px-8 sm:py-10 lg:px-14">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Chrome Web Store
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Live from Google — every extension listed in the store, rated and
+            ranked exactly as the store ranks them.
+          </p>
+        </div>
+        <form
+          className="flex w-full max-w-md items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const q = query.trim();
+            if (q) run(q);
+          }}
+        >
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search extensions, themes…"
+            className="h-10 flex-1"
+          />
+          <Button type="submit" className="h-10 rounded-full px-5">
+            Search
+          </Button>
+        </form>
+      </div>
+
+      <div className="mt-5 flex flex-wrap gap-2">
+        {STORE_DEFAULT_QUERIES.map((q) => (
+          <button
+            key={q}
+            onClick={() => {
+              setQuery(q);
+              run(q);
+            }}
+            className={`rounded-full border px-3.5 py-1.5 text-xs transition-colors ${
+              term === q
+                ? "border-foreground bg-foreground text-background"
+                : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+            }`}
+          >
+            {q}
+          </button>
+        ))}
+      </div>
+
+      {status === "loading" && (
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 9 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-40 animate-pulse rounded-xl border border-border bg-muted/40"
+            />
+          ))}
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="mt-10 rounded-xl border border-dashed border-border px-6 py-12 text-center">
+          <p className="text-sm text-muted-foreground">{error}</p>
+          <Button
+            variant="outline"
+            className="mt-6 rounded-full px-6"
+            onClick={() => term && run(term)}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {status === "done" && (
+        <>
+          <p className="mt-8 font-mono text-[11px] text-muted-foreground">
+            {results.length} live result{results.length === 1 ? "" : "s"}
+            {term ? ` for “${term}”` : ""} · chromewebstore.google.com
+          </p>
+          {results.length === 0 ? (
+            <div className="mt-4 rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+              No store results for “{term}”.
+            </div>
+          ) : (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {results.map((card) => (
+                <div
+                  key={card.id}
+                  className="flex flex-col rounded-xl border border-border p-5 transition-colors hover:border-foreground/30"
+                >
+                  <div className="flex items-start gap-3">
+                    {card.icon ? (
+                      <img
+                        src={card.icon}
+                        alt=""
+                        className="size-12 rounded-lg"
+                        onError={(e) => {
+                          e.currentTarget.style.visibility = "hidden";
+                        }}
+                      />
+                    ) : (
+                      <div className="grid size-12 shrink-0 place-items-center rounded-lg bg-muted">
+                        <Puzzle className="size-5 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-medium" title={card.name}>
+                        {card.name}
+                      </h3>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {card.publisher ?? "Unknown publisher"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {card.rating !== null ? (
+                      <>
+                        <Star className="size-3.5 fill-current" />
+                        {card.rating.toFixed(1)}
+                      </>
+                    ) : (
+                      <span>No ratings yet</span>
+                    )}
+                  </div>
+                  <div className="mt-5 flex items-center gap-2 border-t border-border pt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 rounded-full"
+                      onClick={() => onNavigate(card.url)}
+                    >
+                      View in browser
+                    </Button>
+                    <a
+                      href={card.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="grid size-8 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:text-foreground"
+                      title="Open on chromewebstore.google.com"
+                    >
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

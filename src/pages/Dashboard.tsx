@@ -38,6 +38,8 @@ import {
   Puzzle,
   Search,
   ShieldCheck,
+  Star,
+  Store,
   Trash2,
   UserCircle,
   Wallet,
@@ -383,6 +385,160 @@ function ExtensionsSection() {
           );
         })}
       </div>
+      )}
+
+      {/* Live Chrome Web Store search */}
+      <StoreSearchSection />
+    </div>
+  );
+}
+
+/* ---------------------- Chrome Web Store (live) ------------------------- */
+
+interface StoreCard {
+  id: string;
+  name: string;
+  publisher: string | null;
+  rating: number | null;
+  icon: string | null;
+  url: string;
+}
+
+function StoreSearchSection() {
+  const searchStore = useAction(api.webstore.search);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<StoreCard[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
+    "idle",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const run = (q: string) => {
+    setStatus("loading");
+    setError(null);
+    searchStore({ query: q, limit: 9 })
+      .then((res) => {
+        setResults((res as { results: StoreCard[] }).results);
+        setStatus("done");
+      })
+      .catch((e: unknown) => {
+        setError(
+          e instanceof Error ? e.message : "Could not reach the Chrome Web Store",
+        );
+        setStatus("error");
+      });
+  };
+
+  useEffect(() => {
+    run("web3 wallet");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="rounded-2xl border border-border p-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="grid size-9 place-items-center rounded-lg bg-muted">
+            <Store className="size-4" />
+          </span>
+          <div>
+            <h3 className="text-sm font-medium">Chrome Web Store — live</h3>
+            <p className="text-xs text-muted-foreground">
+              Real store data, straight from Google.
+            </p>
+          </div>
+        </div>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const q = query.trim();
+            if (q) run(q);
+          }}
+        >
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search the store…"
+            className="h-9 w-56 text-sm"
+          />
+          <Button type="submit" size="sm" className="h-9 rounded-full px-4">
+            Search
+          </Button>
+        </form>
+      </div>
+
+      {status === "loading" && (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-36 animate-pulse rounded-xl border border-border bg-muted/40"
+            />
+          ))}
+        </div>
+      )}
+
+      {status === "error" && (
+        <p className="mt-6 text-sm text-muted-foreground">
+          {error} —{" "}
+          <button
+            className="underline underline-offset-2"
+            onClick={() => run("web3 wallet")}
+          >
+            retry
+          </button>
+        </p>
+      )}
+
+      {status === "done" && (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {results.map((card) => (
+            <a
+              key={card.id}
+              href={card.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex flex-col rounded-xl border border-border p-4 transition-colors hover:border-foreground/30"
+            >
+              <div className="flex items-start gap-3">
+                {card.icon ? (
+                  <img
+                    src={card.icon}
+                    alt=""
+                    className="size-10 rounded-lg"
+                    onError={(e) => {
+                      e.currentTarget.style.visibility = "hidden";
+                    }}
+                  />
+                ) : (
+                  <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted">
+                    <Puzzle className="size-4 text-muted-foreground" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium" title={card.name}>
+                    {card.name}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {card.publisher ?? "Unknown publisher"}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                {card.rating !== null ? (
+                  <>
+                    <Star className="size-3.5 fill-current" />
+                    {card.rating.toFixed(1)}
+                  </>
+                ) : (
+                  <span>Unrated</span>
+                )}
+              </div>
+            </a>
+          ))}
+        </div>
       )}
     </div>
   );
