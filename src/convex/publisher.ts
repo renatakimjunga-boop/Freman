@@ -97,6 +97,21 @@ interface Connection {
   publisherId?: string;
 }
 
+/** One item's trend row for the Overview stats panel. */
+interface PublisherTrendItem {
+  itemId: string;
+  name: string;
+  status: string;
+  version: string | null;
+  lastInstalled: number | null;
+  prevInstalled: number | null;
+  change: number | null;
+  averageRating: number | null;
+  ratingCount: number | null;
+  reviewsTruncated: boolean;
+  trend: Array<{ date: string; value: number }>;
+}
+
 /** Connection row for the signed-in user, or null. */
 async function currentConnection(
   ctx: ActionCtx,
@@ -145,6 +160,144 @@ async function accessTokenFor(ctx: ActionCtx) {
   }
   await ctx.runMutation(internal.publisherState.internalTouch, { userId });
   return { token: json.access_token, publisherId: conn.publisherId, userId };
+}
+
+/* ---------------------------- store stats helpers -------------------------- */
+
+/** UTC yyyy-mm-dd (compact form, matching the stats API's date format). */
+function ymd(d: Date): string {
+  return (
+    `${d.getUTCFullYear()}` +
+    `${String(d.getUTCMonth() + 1).padStart(2, "0")}` +
+    `${String(d.getUTCDate()).padStart(2, "0")}`
+  );
+}
+
+interface TimelineRow {
+  date: string | null;
+  item: string | null;
+  value: number;
+}
+
+/**
+ * Dashboard stats timeline (installed counts etc.) — the same source the
+ * developer dashboard charts use. Best-effort: returns [] when the account
+ * has no reported data or the endpoint is unavailable for it.
+ */
+async function fetchTimelineRows(
+  token: string,
+  opts: {
+    metric: string;
+    startDate: string;
+    endDate: string;
+    dimension?: string;
+    itemId?: string;
+  },
+): Promise<TimelineRow[]> {
+  const params = new URLSearchParams({
+    metric: opts.metric,
+    dimension: opts.dimension ?? "date",
+    start_date: opts.startDate,
+    end_date: opts.endDate,
+  });
+  if (opts.itemId && opts.itemId !== "-") params.set("dimension_item", opts.itemId);
+  try {
+    const res = await fetch(
+      `https://chromewebstore.googleapis.com/v2/stats:getTimeline?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return [];
+    const json = (await res.json()) as {
+      rows?: Array<{
+        dimensions?: { date?: string; item?: string };
+        value?: string | number;
+      }>;
+    };
+    return (json.rows ?? []).map((r) => ({
+      date: r.dimensions?.date ?? null,
+      item: r.dimensions?.item ?? null,
+      value: Number(r.value ?? 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Review totals from the documented fetchReviews endpoint. Aggregates up to
+ * the 600 most recent reviews per item (3 pages of 200).
+ */
+async function fetchRatingSummary(
+  token: string,
+  itemId: string,
+): Promise<{
+  averageRating: number | null;
+  ratingCount: number | null;
+  reviewsTruncated: boolean;
+}> {
+  let total = 0;
+  let count = 0;
+  let truncated = false;
+  let pageToken: string | undefined;
+  for (let page = 0; page < 3; page++) {
+    const params = new URLSearchParams({
+      pageSize: "200",
+      orderBy: "create_time desc",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    try {
+      const res = await fetch(
+        `https://chromewebstore.googleapis.com/v2/publishers/-/items/${itemId}:fetchReviews?${params}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) break;
+      const json = (await res.json()) as {
+        reviews?: Array<{ rating?: number }>;
+        nextPageToken?: string;
+      };
+      for (const r of json.reviews ?? []) {
+        const rating = Number(r.rating ?? 0);
+        if (rating >= 1 && rating <= 5) {
+          total += rating;
+          count++;
+        }
+      }
+      if (!json.nextPageToken) break;
+      pageToken = json.nextPageToken;
+      if (page === 2) truncated = true;
+    } catch {
+      break;
+    }
+  }
+  return {
+    averageRating: count > 0 ? Math.round((total / count) * 100) / 100 : null,
+    ratingCount: count > 0 ? count : null,
+    reviewsTruncated: truncated,
+  };
+}
+
+/** Items list shared by listItems and statsTrends. */
+async function fetchPublishersItems(
+  token: string,
+  publisherId?: string,
+): Promise<Array<Record<string, unknown>>> {
+  const res = await fetch(
+    `https://chromewebstore.googleapis.com/v2/publishers/${publisherId ?? "-"}/items`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const json = (await res.json()) as {
+    items?: Array<Record<string, unknown>>;
+    error?: { message?: string };
+  };
+  if (!res.ok) {
+    throw new Error(
+      json.error?.message ??
+        (publisherId
+          ? `Web Store API returned ${res.status}`
+          : `Web Store API returned ${res.status} — confirm your publisher id in the connection card`),
+    );
+  }
+  return json.items ?? [];
 }
 
 /* --------------------------------- actions -------------------------------- */
@@ -287,57 +440,33 @@ export const listItems = action({
   handler: async (ctx) => {
     const { token, publisherId, userId } = await accessTokenFor(ctx);
 
-    const itemsRes = await fetch(
-      `https://chromewebstore.googleapis.com/v2/publishers/${publisherId ?? "-"}/items`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    const itemsJson = (await itemsRes.json()) as {
-      items?: Array<Record<string, unknown>>;
-      error?: { message?: string };
-    };
-    if (!itemsRes.ok) {
-      throw new Error(
-        itemsJson.error?.message ??
-          (publisherId
-            ? `Web Store API returned ${itemsRes.status}`
-            : `Web Store API returned ${itemsRes.status} — confirm your publisher id in the connection card`),
-      );
-    }
-
-    const rows = itemsJson.items ?? [];
+    const rows = await fetchPublishersItems(token, publisherId);
     await ctx.runMutation(internal.publisherState.setItemCount, {
       userId,
       count: rows.length,
     });
 
-    // Install counts are a separate stats call; enrich best-effort.
+    // Install counts come from the dashboard stats timeline — keep each
+    // item's most recent reported day (best-effort enrichment).
     const installs = new Map<string, number>();
-    if (publisherId) {
-      const now = new Date();
-      const ymd =
-        `${now.getUTCFullYear()}` +
-        `${String(now.getUTCMonth() + 1).padStart(2, "0")}` +
-        `${String(now.getUTCDate()).padStart(2, "0")}`;
-      try {
-        const statsRes = await fetch(
-          `https://chromewebstore.googleapis.com/v2/stats?metric=INSTALLATION_COUNT&date=${ymd}&dimension=ITEM`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        if (statsRes.ok) {
-          const statsJson = (await statsRes.json()) as {
-            rows?: Array<{
-              dimensions?: { item?: string };
-              value?: string | number;
-            }>;
-          };
-          for (const r of statsJson.rows ?? []) {
-            const item = r.dimensions?.item;
-            if (item) installs.set(item, Number(r.value ?? 0));
-          }
+    try {
+      const rows = await fetchTimelineRows(token, {
+        metric: "installed_count",
+        startDate: ymd(new Date(Date.now() - 10 * 86_400_000)),
+        endDate: ymd(new Date()),
+        dimension: "item",
+      });
+      const latest = new Map<string, { date: string; value: number }>();
+      for (const row of rows) {
+        if (!row.item || row.date == null) continue;
+        const cur = latest.get(row.item);
+        if (!cur || row.date > cur.date) {
+          latest.set(row.item, { date: row.date, value: row.value });
         }
-      } catch {
-        // Stats are optional enrichment.
       }
+      for (const [itemId, entry] of latest) installs.set(itemId, entry.value);
+    } catch {
+      // Stats are optional enrichment.
     }
 
     return {
@@ -354,6 +483,77 @@ export const listItems = action({
         };
       }),
     };
+  },
+});
+
+/**
+ * Install + rating trends for the Overview panel. Install history comes from
+ * the dashboard stats timeline; rating totals from the documented
+ * fetchReviews endpoint (up to the 600 most recent reviews per item).
+ */
+export const statsTrends = action({
+  args: {
+    days: v.optional(
+      v.union(v.literal(7), v.literal(14), v.literal(30), v.literal(60)),
+    ),
+  },
+  returns: v.any(),
+  handler: async (
+    ctx,
+    { days = 14 },
+  ): Promise<{ items: PublisherTrendItem[]; generatedAt: number }> => {
+    const { token, publisherId, userId } = await accessTokenFor(ctx);
+    const rows = await fetchPublishersItems(token, publisherId);
+
+    const endDate = ymd(new Date());
+    const startDate = ymd(new Date(Date.now() - (days - 1) * 86_400_000));
+
+    const items: PublisherTrendItem[] = [];
+    for (const it of rows.slice(0, 12)) {
+      const itemId = String(it.itemId ?? it.id ?? "");
+      if (!itemId) continue;
+
+      const timeline = await fetchTimelineRows(token, {
+        metric: "installed_count",
+        startDate,
+        endDate,
+        itemId,
+      });
+      const trend = timeline
+        .filter((r) => r.date)
+        .map((r) => {
+          const raw = r.date as string;
+          const date = raw.includes("-")
+            ? raw
+            : `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+          return { date, value: r.value };
+        })
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const ratings = await fetchRatingSummary(token, itemId);
+
+      const last = trend.length ? trend[trend.length - 1].value : null;
+      const first = trend.length ? trend[0].value : null;
+
+      items.push({
+        itemId,
+        name: String(it.displayName ?? it.name ?? "Untitled item"),
+        status: String(it.publishState ?? it.status ?? "UNKNOWN"),
+        version: it.version ? String(it.version) : null,
+        lastInstalled: last,
+        prevInstalled: first,
+        change: last != null && first != null ? last - first : null,
+        averageRating: ratings.averageRating,
+        ratingCount: ratings.ratingCount,
+        reviewsTruncated: ratings.reviewsTruncated,
+        trend,
+      });
+    }
+
+    await ctx.runMutation(internal.publisherState.setItemCount, {
+      userId,
+      count: rows.length,
+    });
+    return { items, generatedAt: Date.now() };
   },
 });
 
