@@ -1,6 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 
 const HEX = "0123456789abcdef";
 
@@ -54,16 +54,21 @@ export const listConnections = query({
 });
 
 /**
- * Insert a custodial account created by the signing action (real keypair,
- * private key already encrypted). First account becomes primary.
+ * Insert a custodial account created by the signing action. Multi-chain rows
+ * carry a chainType + derivation index (key derived from the vault seed);
+ * legacy rows carry their own encrypted private key.
  */
 export const insertCustodial = mutation({
   args: {
     label: v.string(),
     address: v.string(),
-    encryptedPrivateKey: v.string(),
+    encryptedPrivateKey: v.optional(v.string()),
+    chainType: v.optional(
+      v.union(v.literal("evm"), v.literal("solana"), v.literal("tron")),
+    ),
+    derivationIndex: v.optional(v.number()),
   },
-  handler: async (ctx, { label, address, encryptedPrivateKey }) => {
+  handler: async (ctx, { label, address, encryptedPrivateKey, chainType, derivationIndex }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) throw new Error("Not signed in");
 
@@ -78,30 +83,42 @@ export const insertCustodial = mutation({
       label: label.trim() || `Account ${accounts.length + 1}`,
       isPrimary: accounts.length === 0,
       encryptedPrivateKey,
+      chainType,
+      derivationIndex,
       createdAt: Date.now(),
     });
   },
 });
 
-/** Create a new wallet account; the first one becomes primary. */
-export const createAccount = mutation({
-  args: { label: v.string() },
-  handler: async (ctx, { label }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) throw new Error("Not signed in");
-
-    const accounts = await ctx.db
-      .query("walletAccounts")
+/** Internal: the user's encrypted master seed (vault), or null. */
+export const getVaultForUser = internalQuery({
+  args: { userId: v.id("users") },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { userId }) => {
+    const vault = await ctx.db
+      .query("walletVaults")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
+      .unique();
+    return vault?.encryptedSeed ?? null;
+  },
+});
 
-    return await ctx.db.insert("walletAccounts", {
+/** Internal: create the vault row (first account creation only). */
+export const insertVault = internalMutation({
+  args: { userId: v.id("users"), encryptedSeed: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { userId, encryptedSeed }) => {
+    const existing = await ctx.db
+      .query("walletVaults")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (existing) return null;
+    await ctx.db.insert("walletVaults", {
       userId,
-      address: randomAddress(),
-      label: label.trim() || `Account ${accounts.length + 1}`,
-      isPrimary: accounts.length === 0,
+      encryptedSeed,
       createdAt: Date.now(),
     });
+    return null;
   },
 });
 

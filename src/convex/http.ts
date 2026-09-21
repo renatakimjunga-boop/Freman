@@ -101,12 +101,147 @@ function rewriteHtml(html: string, baseUrl: string): string {
   return out;
 }
 
+/* ------------------------------ Safe Browsing ------------------------------ */
+
+/** Static subresources (css/js/img/font) skip the threat check. */
+const SAFE_RESOURCE_PATH =
+  /\.(css|js|mjs|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|map|json|xml|txt)(\?|$)/i;
+
+interface SafeBrowsingMatch {
+  threatType: string;
+}
+
+/**
+ * Query Google Safe Browsing (v4 lookup API) for a single URL. Returns the
+ * first matching threat, or null when clean / unchecked. Any failure is
+ * treated as "clean" — a broken key must never block the browser.
+ */
+async function safeBrowsingThreat(url: string): Promise<SafeBrowsingMatch | null> {
+  const key = process.env.SAFE_BROWSING_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch(
+      `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${key}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client: { clientId: "freman", clientVersion: "1.0" },
+          threatInfo: {
+            threatTypes: [
+              "MALWARE",
+              "SOCIAL_ENGINEERING",
+              "UNWANTED_SOFTWARE",
+              "POTENTIALLY_HARMFUL_APPLICATION",
+            ],
+            platformTypes: ["ANY_PLATFORM"],
+            threatEntryTypes: ["URL"],
+            threatEntries: [{ url }],
+          },
+        }),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      matches?: Array<{ threatType?: string }>;
+    };
+    const first = json.matches?.[0];
+    if (!first) return null;
+    return { threatType: first.threatType ?? "THREAT" };
+  } catch {
+    return null;
+  }
+}
+
+/** Branded warning page shown instead of a flagged site. */
+function safeBrowsingInterstitial(url: string, threat: SafeBrowsingMatch): string {
+  const label = threat.threatType.split("_").join(" ").toLowerCase();
+  const host = (() => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  })();
+  const overrideUrl = `${url}${url.includes("?") ? "&" : "?"}override=1`;
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dangerous site blocked — Freman</title>
+<style>
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: #000; color: #fafafa;
+  }
+  .card { max-width: 34rem; padding: 0 1.5rem; }
+  .tag {
+    display: inline-flex; align-items: center; gap: .5rem;
+    font-size: .6875rem; letter-spacing: .18em; text-transform: uppercase;
+    color: #f42a17; border: 1px solid #f42a1755; border-radius: 999px;
+    padding: .3rem .8rem; margin-bottom: 1.5rem;
+  }
+  h1 { font-size: 1.375rem; font-weight: 600; margin: 0 0 .75rem; }
+  p { font-size: .875rem; line-height: 1.6; color: #a3a3a3; margin: 0 0 1rem; }
+  code { font-size: .8125rem; color: #e5e5e5; }
+  .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.75rem; }
+  a.back {
+    display: inline-block; padding: .55rem 1.25rem; border-radius: 999px;
+    background: #f42a17; color: #fff; font-size: .8125rem; font-weight: 500;
+    text-decoration: none;
+  }
+  a.go {
+    display: inline-block; padding: .55rem 1.25rem; border-radius: 999px;
+    border: 1px solid #404040; color: #a3a3a3; font-size: .8125rem;
+    text-decoration: none;
+  }
+  a.go:hover { color: #fafafa; border-color: #737373; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <span class="tag">Freman · Safe Browsing</span>
+    <h1>Dangerous site blocked</h1>
+    <p>
+      Google Safe Browsing flagged <code>${host}</code> as
+      <strong>${label}</strong>. These pages try to steal passwords or install
+      malicious software.
+    </p>
+    <p>Freman blocked this page before it could load anything.</p>
+    <div class="actions">
+      <a class="go" href="javascript:history.back()">Go back to safety</a>
+      <a class="back" href="${overrideUrl.replace(/"/g, "%22")}">Ignore the risk and open anyway</a>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 export const fetchProxy = httpAction(async (ctx, request) => {
   const params = new URL(request.url).searchParams;
   const url = params.get("url");
   const mobile = params.get("view") === "mobile";
   if (!url || !/^https?:\/\//i.test(url)) {
     return new Response("Missing or invalid ?url", { status: 400 });
+  }
+
+  // Safe Browsing gate — checks page navigations against Google's lists and
+  // shows a branded warning interstitial. Fails open (network/API errors
+  // never block browsing) and honours an explicit ?override=1 for sites the
+  // user has chosen to visit anyway. Subresources skip the check.
+  const override = params.get("override") === "1";
+  const isNavigation = !SAFE_RESOURCE_PATH.test(new URL(url).pathname);
+  if (!override && isNavigation) {
+    const threat = await safeBrowsingThreat(url);
+    if (threat) {
+      return new Response(safeBrowsingInterstitial(url, threat), {
+        status: 403,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
   }
 
   let upstream: Response;

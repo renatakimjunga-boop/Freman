@@ -45,15 +45,23 @@ const schema = defineSchema(
       .index("by_user_sample", ["userId", "sampleId"]),
 
     // Web3 wallet accounts held by the browser's built-in wallet.
-    // Custodial: the private key is generated server-side and stored
-    // AES-256-GCM encrypted. Rows created before the custodial upgrade have
-    // no key material and are receive-only.
+    // Custodial: keys are derived server-side from an encrypted master seed
+    // (BIP-44 for EVM/Tron, SLIP-0010 for Solana). Rows created before the
+    // multi-chain upgrade carry a per-account encrypted key and chainType
+    // "evm" by definition.
     walletAccounts: defineTable({
       userId: v.id("users"),
-      address: v.string(), // 0x-prefixed checksummed address
+      address: v.string(),
       label: v.string(),
       isPrimary: v.boolean(),
-      encryptedPrivateKey: v.optional(v.string()), // v2:iv:tag:ciphertext (hex)
+      // "evm" | "solana" | "tron" (absent on legacy rows = evm)
+      chainType: v.optional(
+        v.union(v.literal("evm"), v.literal("solana"), v.literal("tron")),
+      ),
+      // BIP-44 account index within its chain family.
+      derivationIndex: v.optional(v.number()),
+      // Legacy rows only: v2:iv:tag:ciphertext (hex)
+      encryptedPrivateKey: v.optional(v.string()),
       createdAt: v.number(),
     }).index("by_user", ["userId"]),
 
@@ -64,9 +72,9 @@ const schema = defineSchema(
       hash: v.string(),
       from: v.string(),
       to: v.string(),
-      valueWei: v.string(),
-      chainId: v.number(),
-      chain: v.string(), // "sepolia" | "mainnet"
+      valueWei: v.string(), // smallest unit (wei / lamports / sun)
+      chainId: v.number(), // EVM id; 0 for non-EVM chains
+      chain: v.string(), // "sepolia" | "mainnet" | "solana:devnet" | "tron:mainnet" | ...
       status: v.string(), // pending | confirmed | failed
       blockNumber: v.optional(v.number()),
       gasUsedWei: v.optional(v.string()),
@@ -74,6 +82,15 @@ const schema = defineSchema(
     })
       .index("by_user", ["userId"])
       .index("by_account", ["accountId"]),
+
+    // Encrypted master seed for the multi-chain custodial wallet. One per
+    // user; all account keys are derived from it and never stored raw.
+    walletVaults: defineTable({
+      userId: v.id("users"),
+      // AES-256-GCM blob (WALLET_ENCRYPTION_KEY): v2:iv:tag:ciphertext
+      encryptedSeed: v.string(),
+      createdAt: v.number(),
+    }).index("by_user", ["userId"]),
 
     // Active dApp sessions granted access to a wallet account.
     dappConnections: defineTable({

@@ -21,7 +21,7 @@ export const list = query({
   },
 });
 
-/** Public entry point used by the client right after a broadcast succeeds. */
+/** Public entry point used by the send actions after a broadcast succeeds. */
 export const record = mutation({
   args: {
     accountId: v.id("walletAccounts"),
@@ -29,7 +29,8 @@ export const record = mutation({
     from: v.string(),
     to: v.string(),
     valueWei: v.string(),
-    chain: v.union(v.literal("sepolia"), v.literal("mainnet")),
+    chainId: v.number(),
+    chain: v.string(),
     status: v.union(v.literal("pending"), v.literal("confirmed"), v.literal("failed")),
     blockNumber: v.optional(v.number()),
     gasUsedWei: v.optional(v.string()),
@@ -57,7 +58,7 @@ export const record = mutation({
       from: args.from,
       to: args.to,
       valueWei: args.valueWei,
-      chainId: args.chain === "mainnet" ? 1 : 11155111,
+      chainId: args.chainId,
       chain: args.chain,
       status: args.status,
       blockNumber: args.blockNumber,

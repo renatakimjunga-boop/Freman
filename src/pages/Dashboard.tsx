@@ -19,6 +19,15 @@ import {
   EXTENSION_SAMPLES,
 } from "@/lib/extension-samples";
 import { DAPPS } from "@/lib/dapps";
+import {
+  accountFamily,
+  DEFAULT_NETWORKS,
+  FAMILY_LABELS,
+  isValidRecipient,
+  networkMeta,
+  networksForFamily,
+  type ChainFamily,
+} from "@/lib/networks";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -45,7 +54,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
@@ -117,6 +126,257 @@ function StatBlock({
   );
 }
 
+/* --------------------------- Web Store trends ---------------------------- */
+
+interface TrendPoint {
+  date: string;
+  value: number;
+}
+
+interface TrendItem {
+  itemId: string;
+  name: string;
+  status: string;
+  version: string | null;
+  lastInstalled: number | null;
+  prevInstalled: number | null;
+  change: number | null;
+  averageRating: number | null;
+  ratingCount: number | null;
+  reviewsTruncated: boolean;
+  trend: TrendPoint[];
+}
+
+/** Tiny monochrome sparkline for install counts over time. */
+function Sparkline({ points }: { points: TrendPoint[] }) {
+  if (points.length < 2) {
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        Not enough daily data for a trend yet.
+      </p>
+    );
+  }
+  const values = points.map((p) => p.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const w = 200;
+  const h = 40;
+  const step = w / (points.length - 1);
+  const path = points
+    .map((p, i) => {
+      const x = (i * step).toFixed(1);
+      const y = (h - 3 - ((p.value - min) / span) * (h - 6)).toFixed(1);
+      return `${i === 0 ? "M" : "L"}${x},${y}`;
+    })
+    .join(" ");
+  const last = points[points.length - 1];
+  const lastY = h - 3 - ((last.value - min) / span) * (h - 6);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-10 w-full" preserveAspectRatio="none">
+      <path
+        d={path}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        className="text-muted-foreground"
+      />
+      <circle
+        cx={w}
+        cy={lastY}
+        r="2.5"
+        className="fill-red-500"
+      />
+    </svg>
+  );
+}
+
+const TREND_RANGES = [
+  { days: 7 as const, label: "7 days" },
+  { days: 14 as const, label: "14 days" },
+  { days: 30 as const, label: "30 days" },
+  { days: 60 as const, label: "60 days" },
+];
+
+function WebStoreTrendsPanel({
+  onNavigate,
+}: {
+  onNavigate: (s: SectionId) => void;
+}) {
+  const connection = useQuery(api.publisherState.get);
+  const loadTrends = useAction(api.publisher.statsTrends);
+  const [days, setDays] = useState<7 | 14 | 30 | 60>(14);
+  const [items, setItems] = useState<TrendItem[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(
+    (range: 7 | 14 | 30 | 60) => {
+      setBusy(true);
+      setError(null);
+      loadTrends({ days: range })
+        .then((res) => {
+          const typed = res as { items: TrendItem[]; generatedAt: number };
+          setItems(typed.items);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : "Could not load stats");
+        })
+        .finally(() => setBusy(false));
+    },
+    [loadTrends],
+  );
+
+  // Load automatically once the connection is known and present.
+  const autoLoaded = useRef(false);
+  useEffect(() => {
+    if (connection && !autoLoaded.current) {
+      autoLoaded.current = true;
+      refresh(days);
+    }
+  }, [connection, days, refresh]);
+
+  if (connection === undefined) return null;
+
+  if (connection === null) {
+    return (
+      <div className="rounded-xl border border-border px-5 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Web Store publisher stats</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Connect a Chrome Web Store publisher account to see install
+              trends and ratings for your published extensions here.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full px-4 text-xs"
+            onClick={() => onNavigate("extensions")}
+          >
+            Connect publisher
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-border">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
+        <span className="text-sm font-medium">Web Store publisher stats</span>
+        {connection.publisherId && (
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {connection.publisherId}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          <div className="inline-flex overflow-hidden rounded-lg border border-border">
+            {TREND_RANGES.map((r) => (
+              <button
+                key={r.days}
+                onClick={() => {
+                  setDays(r.days);
+                  refresh(r.days);
+                }}
+                className={`px-2.5 py-1 text-[11px] transition-colors ${
+                  days === r.days
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+            disabled={busy}
+            onClick={() => refresh(days)}
+          >
+            {busy ? "Loading…" : "Refresh"}
+          </Button>
+        </div>
+      </div>
+      <div className="px-5 py-4">
+        {error ? (
+          <p className="text-xs text-red-500">{error}</p>
+        ) : items === null ? (
+          <p className="text-xs text-muted-foreground">
+            {busy ? "Loading stats from the Web Store…" : "No data loaded yet."}
+          </p>
+        ) : items.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No published items yet — upload an extension in Extensions →
+            Publisher mode to start collecting stats.
+          </p>
+        ) : (
+          <div className="grid gap-px overflow-hidden rounded-lg bg-border sm:grid-cols-2">
+            {items.map((item) => {
+              const change = item.change;
+              return (
+                <div key={item.itemId} className="bg-card px-5 py-4">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="truncate text-sm font-medium" title={item.name}>
+                      {item.name}
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 rounded-full font-normal text-muted-foreground"
+                    >
+                      {item.status}
+                    </Badge>
+                  </div>
+                  <div className="mt-3 flex items-end gap-4">
+                    <div>
+                      <p className="font-mono text-xl tracking-tight">
+                        {item.lastInstalled != null
+                          ? item.lastInstalled.toLocaleString()
+                          : "—"}
+                      </p>
+                      <p className="mt-0.5 text-[11px] uppercase tracking-widest text-muted-foreground">
+                        Installed
+                      </p>
+                    </div>
+                    {change != null && (
+                      <p
+                        className={`pb-0.5 font-mono text-xs ${
+                          change > 0
+                            ? "text-green-600 dark:text-green-500"
+                            : change < 0
+                              ? "text-red-500"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {change > 0 ? "+" : ""}
+                        {change} over {days}d
+                      </p>
+                    )}
+                    {item.averageRating != null && (
+                      <p className="ml-auto flex items-center gap-1 pb-0.5 text-xs text-muted-foreground">
+                        <Star className="size-3 fill-current text-red-500" />
+                        {item.averageRating.toFixed(2)}
+                        {item.ratingCount != null && ` (${item.ratingCount})`}
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-3">
+                    <Sparkline points={item.trend} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------- Overview ------------------------------- */
 
 function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void }) {
@@ -141,6 +401,8 @@ function OverviewSection({ onNavigate }: { onNavigate: (s: SectionId) => void })
         <StatBlock value={connections.length} label="dApp sessions" />
         <StatBlock value={builds.length} label="Builds queued" />
       </div>
+
+      <WebStoreTrendsPanel onNavigate={onNavigate} />
 
       <div className="rounded-xl border border-border">
         <div className="flex items-center gap-3 border-b border-border px-5 py-3">
@@ -883,13 +1145,20 @@ function Web3Section() {
   const accounts = useQuery(api.wallet.listAccounts) ?? [];
   const connections = useQuery(api.wallet.listConnections) ?? [];
   const transactions = useQuery(api.transactions.list) ?? [];
-  const createCustodial = useAction(api.custodialWallet.createCustodialAccount);
+  const createCustodial = useAction(api.custodialWallet.createAccount);
   const removeAccount = useMutation(api.wallet.removeAccount);
   const setPrimary = useMutation(api.wallet.setPrimary);
   const connectDapp = useMutation(api.wallet.connectDapp);
   const disconnectDapp = useMutation(api.wallet.disconnectDapp);
-  const [network, setNetwork] = useState<"sepolia" | "mainnet">("sepolia");
+  const [family, setFamily] = useState<ChainFamily>("evm");
+  const [networkByFamily, setNetworkByFamily] = useState<Record<ChainFamily, string>>(
+    DEFAULT_NETWORKS,
+  );
   const [sendTarget, setSendTarget] = useState<Doc<"walletAccounts"> | null>(null);
+  const network = networkByFamily[family];
+  const setNetwork = (id: string) =>
+    setNetworkByFamily((prev) => ({ ...prev, [family]: id }));
+  const activeNetwork = networkMeta(network);
 
   const connectionByOrigin = useMemo(
     () => new Map(connections.map((c) => [c.origin, c])),
@@ -911,32 +1180,45 @@ function Web3Section() {
         description="A real custodial wallet — Freman generates each keypair server-side and stores the private key AES-256-GCM encrypted. Balances are live on-chain; sends are signed and broadcast for real."
       />
 
-      {/* Network switch */}
+      {/* Chain family + network switch */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="inline-flex overflow-hidden rounded-lg border border-border">
-          {(
-            [
-              ["sepolia", "Sepolia testnet"],
-              ["mainnet", "Ethereum mainnet"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => setNetwork(id)}
-              className={`px-4 py-1.5 text-xs transition-colors ${
-                network === id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex overflow-hidden rounded-lg border border-border">
+            {(["evm", "solana", "tron"] as ChainFamily[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFamily(f)}
+                className={`px-4 py-1.5 text-xs transition-colors ${
+                  family === f
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                {FAMILY_LABELS[f]}
+              </button>
+            ))}
+          </div>
+          <Select
+            value={network}
+            onValueChange={(id) => setNetwork(id)}
+          >
+            <SelectTrigger className="h-9 w-[200px] rounded-lg text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {networksForFamily(family).map((n) => (
+                <SelectItem key={n.id} value={n.id} className="text-xs">
+                  {n.label}
+                  {n.testnet ? " (test)" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        {network === "mainnet" && (
+        {activeNetwork && !activeNetwork.testnet && (
           <p className="flex items-center gap-2 text-xs text-red-500">
             <span className="size-1.5 rounded-full bg-red-500" />
-            Mainnet moves real funds — test with Sepolia first.
+            {activeNetwork.label} moves real funds — test on a testnet first.
           </p>
         )}
       </div>
@@ -951,12 +1233,16 @@ function Web3Section() {
             size="sm"
             className="h-9 rounded-full px-4 text-xs"
             onClick={() =>
-              createCustodial({ label: "" })
-                .then(() => toast.success("Custodial account created — key encrypted at rest"))
+              createCustodial({ label: "", chainType: family })
+                .then(() =>
+                  toast.success(
+                    `${FAMILY_LABELS[family]} account created — key encrypted at rest`,
+                  ),
+                )
                 .catch(() => toast.error("Could not create account"))
             }
           >
-            Create custodial account
+            Create {FAMILY_LABELS[family]} account
           </Button>
         </div>
 
@@ -968,7 +1254,9 @@ function Web3Section() {
           </div>
         ) : (
           <div className="mt-4 overflow-hidden rounded-xl border border-border">
-            {accounts.map((account: Doc<"walletAccounts">, i: number) => (
+            {accounts
+              .filter((a: Doc<"walletAccounts">) => accountFamily(a) === family)
+              .map((account: Doc<"walletAccounts">, i: number) => (
               <WalletAccountRow
                 key={account._id}
                 account={account}
@@ -985,8 +1273,7 @@ function Web3Section() {
                     .then(() => toast.success(`${account.label} is now primary`))
                     .catch(() => toast.error("Could not set primary"))
                 }
-              />
-            ))}
+              />))}
           </div>
         )}
       </div>
@@ -1366,13 +1653,14 @@ function WalletAccountRow({
 }: {
   account: Doc<"walletAccounts">;
   isFirst: boolean;
-  network: "sepolia" | "mainnet";
+  network: string;
   onSend: () => void;
   onRemove: () => void;
   onMakePrimary: () => void;
 }) {
   const getBalance = useAction(api.custodialWallet.getBalance);
   const [balance, setBalance] = useState<string | null>(null);
+  const [symbol, setSymbol] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -1380,10 +1668,11 @@ function WalletAccountRow({
     let cancelled = false;
     setLoading(true);
     setError(false);
-    getBalance({ address: account.address, chain: network })
+    getBalance({ address: account.address, network })
       .then((res) => {
         if (!cancelled) {
-          setBalance(Number(res.balanceEth).toFixed(5));
+          setBalance(Number(res.formatted).toFixed(5));
+          setSymbol(res.symbol);
           setLoading(false);
         }
       })
@@ -1417,6 +1706,14 @@ function WalletAccountRow({
         }`}
       />
       <span className="text-sm font-medium">{account.label}</span>
+      {account.chainType && account.chainType !== "evm" && (
+        <Badge
+          variant="outline"
+          className="rounded-full font-normal capitalize text-muted-foreground"
+        >
+          {account.chainType}
+        </Badge>
+      )}
       <button
         onClick={() => copyAddress(account.address)}
         className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -1438,7 +1735,7 @@ function WalletAccountRow({
           ? "…"
           : error
             ? "—"
-            : `${balance} ETH`}
+            : `${balance} ${symbol}`}
       </span>
       <div className="flex items-center gap-1">
         {account.encryptedPrivateKey && (
@@ -1481,7 +1778,7 @@ function SendDialog({
   onClose,
 }: {
   account: Doc<"walletAccounts">;
-  network: "sepolia" | "mainnet";
+  network: string;
   onClose: () => void;
 }) {
   const sendTransaction = useAction(api.custodialWallet.sendTransaction);
@@ -1495,8 +1792,11 @@ function SendDialog({
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const valid = /^0x[0-9a-fA-F]{40}$/.test(to) && Number(amount) > 0;
-  const isMainnet = network === "mainnet";
+  const family = accountFamily(account);
+  const meta = networkMeta(network);
+  const valid = isValidRecipient(family, to) && Number(amount) > 0;
+  const isMainnet = meta ? !meta.testnet : false;
+  const symbol = meta?.symbol ?? "";
 
   function submit() {
     if (!valid || busy) return;
@@ -1505,8 +1805,8 @@ function SendDialog({
     sendTransaction({
       accountId: account._id,
       to,
-      amountEth: amount,
-      chain: network,
+      amount,
+      network,
       confirmed: isMainnet,
     })
       .then((res) => {
@@ -1543,7 +1843,7 @@ function SendDialog({
         {result ? (
           <div className="flex flex-col gap-3">
             <p className="text-sm">
-              Broadcast {result.status} · {(Number(amount) || 0).toString()} ETH →{" "}
+              Broadcast {result.status} · {(Number(amount) || 0).toString()} {symbol} →{" "}
               <span className="font-mono text-xs text-muted-foreground">
                 {shorten(to || "")}
               </span>
@@ -1570,25 +1870,25 @@ function SendDialog({
           <>
             {isMainnet && (
               <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-xs leading-5 text-red-500">
-                You're sending real ETH on Ethereum mainnet. This is
+                You're sending real {symbol} on {meta?.label}. This is
                 irreversible. Freman signs and broadcasts it immediately.
               </p>
             )}
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                Recipient
+                Recipient ({FAMILY_LABELS[family]} address)
               </label>
               <Input
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                placeholder="0x…"
+                placeholder={family === "evm" ? "0x…" : family === "tron" ? "T…" : "Base58 address"}
                 className="h-9 font-mono text-xs"
                 spellCheck={false}
               />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                Amount (ETH)
+                Amount ({symbol})
               </label>
               <Input
                 value={amount}
@@ -1603,7 +1903,7 @@ function SendDialog({
             )}
             <div className="flex items-center justify-between">
               <span className="font-mono text-[11px] text-muted-foreground">
-                {network === "sepolia" ? "Sepolia testnet" : "Ethereum mainnet"}
+                {meta?.label}
               </span>
               <Button
                 size="sm"
