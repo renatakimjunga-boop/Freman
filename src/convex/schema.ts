@@ -123,6 +123,33 @@ const schema = defineSchema(
       .index("by_user_visited", ["userId", "visitedAt"]),
 
     // Saved bookmarks, shared between the browser's bookmarks bar and Studio.
+    publisherOauthStates: defineTable({
+      // Opaque state token round-tripped through Google.
+      state: v.string(),
+      // PKCE verifier kept server-side until the callback exchanges the code.
+      verifier: v.string(),
+      // The Freman account this connection will bind to.
+      userId: v.id("users"),
+      // Where to send the user after connecting (Studio origin).
+      appOrigin: v.optional(v.string()),
+      at: v.number(),
+    }).index("by_state", ["state"]),
+
+    publisherConnections: defineTable({
+      userId: v.id("users"),
+      // Google account identity bound to this connection.
+      googleEmail: v.optional(v.string()),
+      // OAuth client used (so credentials can be rotated safely).
+      clientId: v.string(),
+      publisherId: v.optional(v.string()),
+      // AES-256-GCM blob (WALLET_ENCRYPTION_KEY): v2:iv:tag:ciphertext
+      encryptedRefreshToken: v.string(),
+      // Denormalized item count shown in the Studio.
+      itemCount: v.optional(v.number()),
+      connectedAt: v.number(),
+      lastUsedAt: v.optional(v.number()),
+    }).index("by_user", ["userId"]),
+
     browserBookmarks: defineTable({
       userId: v.id("users"),
       label: v.string(),

@@ -45,7 +45,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
@@ -389,6 +389,335 @@ function ExtensionsSection() {
 
       {/* Live Chrome Web Store search */}
       <StoreSearchSection />
+
+      {/* Publisher mode — connect, upload, publish */}
+      <PublisherPanel />
+    </div>
+  );
+}
+
+/* ------------------------- Publisher (official API) ---------------------- */
+
+interface PublisherItem {
+  id: string;
+  name: string;
+  status: string;
+  version: string | null;
+  installs: number | null;
+}
+
+const PUBLISH_STATES: Record<string, { label: string; tone: string }> = {
+  DRAFT: { label: "Draft", tone: "text-muted-foreground" },
+  PENDING_REVIEW: { label: "Pending review", tone: "text-amber-500" },
+  IN_REVIEW: { label: "In review", tone: "text-amber-500" },
+  PUBLISHED: { label: "Published", tone: "text-emerald-500" },
+  REJECTED: { label: "Rejected", tone: "text-red-500" },
+  UNPUBLISHED: { label: "Unpublished", tone: "text-muted-foreground" },
+};
+
+function PublisherPanel() {
+  const { isAuthenticated } = useAuth();
+  const connection = useQuery(api.publisherState.get);
+  const disconnect = useMutation(api.publisherState.disconnect);
+  const setPublisherId = useMutation(api.publisherState.setPublisherId);
+  const startConnect = useAction(api.publisher.startConnect);
+  const listItemsAction = useAction(api.publisher.listItems);
+  const uploadAction = useAction(api.publisher.upload);
+  const publishAction = useAction(api.publisher.publish);
+
+  const [connecting, setConnecting] = useState(false);
+  const [items, setItems] = useState<PublisherItem[] | null>(null);
+  const [itemsBusy, setItemsBusy] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [publishTarget, setPublishTarget] = useState<"default" | "trustedTesters">(
+    "default",
+  );
+  const [pubIdDraft, setPubIdDraft] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Listen for the popup completing the OAuth flow.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "freman-publisher-connected") {
+        setConnecting(false);
+        toast.success(
+          e.data.email
+            ? `Publisher connected — ${e.data.email}`
+            : "Publisher account connected",
+        );
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  const connect = async () => {
+    setConnecting(true);
+    try {
+      const url = await startConnect({ appOrigin: window.location.origin });
+      window.open(url, "freman-publisher-oauth", "width=520,height=680");
+      // If the popup is blocked, fall back to same-tab navigation.
+      setTimeout(() => {
+        if (!window.closed) setConnecting(false);
+      }, 2000);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not start the connect flow");
+      setConnecting(false);
+    }
+  };
+
+  const refreshItems = () => {
+    setItemsBusy(true);
+    setItemsError(null);
+    listItemsAction({})
+      .then((res) => {
+        setItems((res as { items: PublisherItem[] }).items);
+      })
+      .catch((e: unknown) => {
+        setItemsError(e instanceof Error ? e.message : "Could not list items");
+      })
+      .finally(() => setItemsBusy(false));
+  };
+
+  const onUpload = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      toast.error("Choose an extension .zip file");
+      return;
+    }
+    setUploading(true);
+    try {
+      const zipBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.slice(result.indexOf(",") + 1));
+        };
+        reader.onerror = () => reject(new Error("Could not read the file"));
+        reader.readAsDataURL(file);
+      });
+      const res = (await uploadAction({ zipBase64, publishTarget })) as {
+        itemId: string | null;
+        uploadState: string;
+      };
+      toast.success(
+        res.itemId
+          ? `Uploaded (${res.uploadState}) — item ${res.itemId}`
+          : `Uploaded (${res.uploadState})`,
+      );
+      refreshItems();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const doPublish = async (itemId: string) => {
+    try {
+      const res = (await publishAction({ itemId, publishTarget })) as {
+        status: string;
+      };
+      toast.success(`Publish submitted (${res.status}) — review pending at Google`);
+      refreshItems();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Publish failed");
+    }
+  };
+
+  const card = (children: React.ReactNode) => (
+    <div className="rounded-2xl border border-border p-6">{children}</div>
+  );
+
+  if (!isAuthenticated) {
+    return card(
+      <p className="text-sm text-muted-foreground">
+        Sign in to connect your Chrome Web Store publisher account.
+      </p>,
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-border p-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="grid size-9 place-items-center rounded-lg bg-muted">
+            <ShieldCheck className="size-4" />
+          </span>
+          <div>
+            <h3 className="text-sm font-medium">Publisher mode — official Web Store API</h3>
+            <p className="text-xs text-muted-foreground">
+              Upload zips, publish updates, and track review status — straight to Google.
+            </p>
+          </div>
+        </div>
+        {connection ? (
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-red-500" />
+              {connection.googleEmail ?? "Connected"}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-full px-3 text-xs text-muted-foreground"
+              onClick={() => {
+                void disconnect({});
+                setItems(null);
+                toast.success("Publisher account disconnected");
+              }}
+            >
+              Disconnect
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            className="h-9 rounded-full px-4"
+            disabled={connecting}
+            onClick={() => void connect()}
+          >
+            {connecting ? "Connecting…" : "Connect Google account"}
+          </Button>
+        )}
+      </div>
+
+      {connection ? (
+        <div className="mt-6 space-y-5">
+          {/* Publisher id */}
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-56 flex-1">
+              <label className="text-xs font-medium text-muted-foreground">
+                Publisher ID
+              </label>
+              <Input
+                value={pubIdDraft || connection.publisherId || ""}
+                onChange={(e) => setPubIdDraft(e.target.value)}
+                placeholder="e.g. 4812597… (from the developer dashboard URL)"
+                className="mt-1 h-9 font-mono text-sm"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-full px-4"
+              disabled={!pubIdDraft || pubIdDraft === connection.publisherId}
+              onClick={() => {
+                void setPublisherId({ publisherId: pubIdDraft })
+                  .then(() => toast.success("Publisher ID saved"))
+                  .finally(() => setPubIdDraft(""));
+              }}
+            >
+              Save
+            </Button>
+          </div>
+
+          {/* Upload + target */}
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onUpload(f);
+              }}
+            />
+            <Button
+              size="sm"
+              className="h-9 rounded-full px-4"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+            >
+              {uploading ? "Uploading…" : "Upload extension zip"}
+            </Button>
+            <Select
+              value={publishTarget}
+              onValueChange={(v) => setPublishTarget(v as "default" | "trustedTesters")}
+            >
+              <SelectTrigger className="h-9 w-56 rounded-full text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Publish publicly</SelectItem>
+                <SelectItem value="trustedTesters">Trusted testers only</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Items */}
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-widest text-muted-foreground">
+              Your items {connection.itemCount != null ? `· ${connection.itemCount}` : ""}
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-full px-3 text-xs"
+              disabled={itemsBusy}
+              onClick={refreshItems}
+            >
+              {itemsBusy ? "Loading…" : "Refresh from Google"}
+            </Button>
+          </div>
+
+          {itemsError && (
+            <p className="text-sm text-muted-foreground">{itemsError}</p>
+          )}
+
+          {items === null && !itemsError ? (
+            <p className="text-sm text-muted-foreground">
+              Load your items to see live review status and install counts.
+            </p>
+          ) : items?.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No items yet — upload a zip above to create your first draft.
+            </p>
+          ) : (
+            <div className="divide-y divide-border rounded-xl border border-border">
+              {(items ?? []).map((it) => {
+                const tone = PUBLISH_STATES[it.status]?.tone ?? "text-muted-foreground";
+                const label = PUBLISH_STATES[it.status]?.label ?? it.status;
+                return (
+                  <div
+                    key={it.id}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{it.name}</p>
+                      <p className="font-mono text-[11px] text-muted-foreground">
+                        {it.id}
+                        {it.version ? ` · v${it.version}` : ""}
+                        {it.installs != null ? ` · ${it.installs.toLocaleString()} installs` : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xs font-medium ${tone}`}>{label}</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-full px-3 text-xs"
+                        onClick={() => void doPublish(it.id)}
+                      >
+                        Publish
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="mt-5 text-sm leading-6 text-muted-foreground">
+          Connecting opens Google in a popup and grants Freman the
+          {" "}
+          <span className="font-mono text-xs">chromewebstore</span> scope. Tokens
+          are encrypted at rest; nothing is stored in the browser.
+        </p>
+      )}
     </div>
   );
 }

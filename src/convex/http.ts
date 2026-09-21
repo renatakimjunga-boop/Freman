@@ -1,6 +1,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { auth } from "./auth";
+import { api, internal } from "./_generated/api";
 
 /**
  * Embeddable page proxy.
@@ -160,6 +161,101 @@ http.route({
   path: "/fetchProxy",
   method: "GET",
   handler: fetchProxy,
+});
+
+/* --------------------- Chrome Web Store publisher OAuth ------------------- */
+
+/**
+ * Publisher connect callback.
+ *
+ * `publisher.startConnect` (an authenticated action) builds the Google
+ * consent URL with PKCE and stores the verifier + Freman user id in the
+ * publisherOauthStates table. Google redirects here; the exchange runs in
+ * the internal action `publisher.exchangeOnCallback`, because this request
+ * carries no Freman session — the user binding comes from the state row.
+ */
+
+function page(title: string, body: string): Response {
+  return new Response(
+    `<!doctype html><html><head><meta charset="utf-8">` +
+      `<title>${title} · Freman</title>` +
+      `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+      `<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#000;color:#fff}` +
+      `main{text-align:center;max-width:32rem;padding:2rem}h1{font-size:1.15rem;font-weight:600;letter-spacing:-0.01em}` +
+      `p{color:#a1a1aa;font-size:.9rem;line-height:1.6}</style></head>` +
+      `<body><main><h1>${title}</h1>${body}` +
+      `<p style="margin-top:1.5rem"><a href="javascript:window.close()" style="color:#f42a17">Close this window</a></p></main></body></html>`,
+    { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+  );
+}
+
+const publisherCallback = httpAction(async (ctx, request) => {
+  const params = new URL(request.url).searchParams;
+  const code = params.get("code");
+  const state = params.get("state");
+  const error = params.get("error");
+
+  const siteUrl = process.env.CONVEX_SITE_URL;
+  const redirectUri = siteUrl
+    ? `${siteUrl.replace(/\/$/, "")}/publisher/oauth/callback`
+    : new URL(request.url).origin + "/publisher/oauth/callback";
+
+  if (error || !code || !state) {
+    return page(
+      "Connection failed",
+      `<p>${
+        error
+          ? `Google returned “${error}”.`
+          : "The connect attempt was invalid. Start again from the Studio."
+      }</p>`,
+    );
+  }
+
+  let result: {
+    ok: boolean;
+    error?: string;
+    email?: string | null;
+    appOrigin?: string | null;
+  };
+  try {
+    result = (await ctx.runAction(internal.publisher.exchangeOnCallback, {
+      state,
+      code,
+      redirectUri,
+    })) as typeof result;
+  } catch (e) {
+    result = {
+      ok: false,
+      error: e instanceof Error ? e.message : "Token exchange failed",
+    };
+  }
+
+  const appOrigin = result.appOrigin ?? siteUrl ?? null;
+
+  if (!result.ok) {
+    return page(
+      "Connection failed",
+      `<p>${
+        result.error === "expired"
+          ? "The connect attempt expired — start again from the Studio."
+          : (result.error ?? "Token exchange failed.")
+      }</p>`,
+    );
+  }
+
+  return page(
+    "Publisher connected",
+    `<p>${
+      result.email ? `${result.email} is now` : "Your account is"
+    } linked to Freman. Return to the Studio to upload and publish extensions.</p>` +
+      `<script>if (window.opener && ${JSON.stringify(appOrigin)}) { window.opener.postMessage({ type: "freman-publisher-connected", email: ${JSON.stringify(result.email ?? null)} }, ${JSON.stringify(appOrigin)}); }</script>`,
+  );
+});
+
+http.route({
+  path: "/publisher/oauth/callback",
+  method: "GET",
+  handler: publisherCallback,
 });
 
 export default http;
