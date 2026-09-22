@@ -1096,7 +1096,15 @@ export const revealAccountKey = action({
     encoding: v.string(), // "hex" (EVM / Tron) or "base58" (Solana)
     privateKey: v.string(),
   }),
-  handler: async (ctx, { accountId }) => {
+  handler: async (
+    ctx,
+    { accountId },
+  ): Promise<{
+    address: string;
+    chainType: string;
+    encoding: string;
+    privateKey: string;
+  }> => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) throw new Error("Not signed in");
     const account = await ctx.runQuery(api.wallet.getForSigning, { accountId });
@@ -1257,16 +1265,25 @@ export const swapQuote = action({
     buyToken: v.string(),
     amount: v.string(), // human units
     slippageBps: v.optional(v.number()),
-  },
-  returns: v.object({
-    provider: v.string(),
-    sellAmountRaw: v.string(),
-    buyAmountRaw: v.string(),
-    sellDecimals: v.number(),
-    buyDecimals: v.number(),
-    priceImpactPct: v.optional(v.string()),
-  }),
-  handler: async (ctx, { accountId, network, sellToken, buyToken, amount, slippageBps }) => {
+  },    returns: v.object({
+      provider: v.string(),
+      sellAmountRaw: v.string(),
+      buyAmountRaw: v.string(),
+      sellDecimals: v.number(),
+      buyDecimals: v.number(),
+      priceImpactPct: v.optional(v.string()),
+    }),
+    handler: async (
+      ctx,
+      { accountId, network, sellToken, buyToken, amount, slippageBps },
+    ): Promise<{
+      provider: string;
+      sellAmountRaw: string;
+      buyAmountRaw: string;
+      sellDecimals: number;
+      buyDecimals: number;
+      priceImpactPct?: string;
+    }> => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) throw new Error("Not signed in");
     const account = await ctx.runQuery(api.wallet.getForSigning, { accountId });

@@ -22,6 +22,7 @@ import "./index.css";
 const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
+const WalletPage = lazy(() => import("./pages/Wallet.tsx"));
 const Browse = lazy(() => import("./pages/Browse.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
@@ -229,6 +230,14 @@ createRoot(document.getElementById("root")!).render(
                 element={
                   <RequireAuth>
                     <Dashboard />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/wallet"
+                element={
+                  <RequireAuth>
+                    <WalletPage />
                   </RequireAuth>
                 }
               />

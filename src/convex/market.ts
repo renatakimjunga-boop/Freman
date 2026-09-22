@@ -73,7 +73,9 @@ export const priceHistory = action({
     ]);
     return {
       coinId,
-      current: simple[coinId]?.usd ?? chart.prices.at(-1)?.[1] ?? 0,
+      current: simple[coinId]?.usd ??
+        chart.prices[chart.prices.length - 1]?.[1] ??
+        0,
       change24h: simple[coinId]?.usd_24h_change ?? 0,
       points: chart.prices.map(([t, p]) => ({ t, p })),
     };
