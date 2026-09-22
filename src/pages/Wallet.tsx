@@ -137,8 +137,8 @@ export default function WalletPage() {
     let cancelled = false;
     setBalancesLoading(true);
     Promise.all([
-      getNativeBalance({ accountId: account._id, network }),
-      getTokenBalances({ accountId: account._id, network }),
+      getNativeBalance({ address: account.address, network }),
+      getTokenBalances({ address: account.address, network }),
     ])
       .then(([nb, tb]) => {
         if (cancelled) return;
@@ -163,8 +163,8 @@ export default function WalletPage() {
     if (!account) return;
     setBalancesLoading(true);
     Promise.all([
-      getNativeBalance({ accountId: account._id, network }),
-      getTokenBalances({ accountId: account._id, network }),
+      getNativeBalance({ address: account.address, network }),
+      getTokenBalances({ address: account.address, network }),
     ])
       .then(([nb, tb]) => {
         setNative({ formatted: nb.formatted, symbol: nb.symbol });

@@ -1270,6 +1270,25 @@ function Web3Section() {
         description="A real custodial wallet — Freman generates each keypair server-side and stores the private key AES-256-GCM encrypted. Balances are live on-chain; sends are signed and broadcast for real."
       />
 
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-muted/40 px-5 py-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Full wallet</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Balance chart, token lists, send / receive / swap, seed phrase &amp; key reveal, and full transaction history.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          className="h-9 shrink-0 rounded-full px-4 text-xs"
+          asChild
+        >
+          <Link to="/wallet">
+            Open wallet
+            <ArrowUpRight className="size-3.5" />
+          </Link>
+        </Button>
+      </div>
+
       {/* Chain family + network switch */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
