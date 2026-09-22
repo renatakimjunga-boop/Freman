@@ -11,6 +11,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -28,6 +31,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Chrome,
   Copy,
   ExternalLink,
   Globe,
@@ -54,7 +58,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
@@ -159,6 +163,25 @@ function compactAmount(value: string): string {
   if (n >= 1) return n.toFixed(2);
   return n.toPrecision(3);
 }
+/**
+ * Trigger the browser's install prompt for Freman (beforeinstallprompt was
+ * captured on mount). Falls back to instructions when the browser doesn't
+ * expose installation — e.g. already installed, or an unsupported browser.
+ */
+function installPwa() {
+  const event = (window as unknown as {
+    __fremanInstallPrompt?: { prompt: () => Promise<void> };
+  }).__fremanInstallPrompt;
+  if (event) {
+    void event.prompt();
+    return;
+  }
+  toast(
+    "To install: open your browser menu and choose \u201CInstall Freman\u201D (or \u201CAdd to Home screen\u201D on mobile).",
+    { duration: 8000 },
+  );
+}
+
 
 function normalizeUrl(raw: string): string {
   return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
@@ -304,12 +327,34 @@ export default function Browse() {
     return () => clearInterval(timer);
   }, []);
 
+  // Capture the PWA install prompt so "Install Freman" can fire it later.
+  useEffect(() => {
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      (
+        window as unknown as {
+          __fremanInstallPrompt?: { prompt: () => Promise<void> };
+        }
+      ).__fremanInstallPrompt = e as unknown as {
+        prompt: () => Promise<void>;
+      };
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+  }, []);
+
   const enabledSampleIds = new Set(
     installed.filter((e) => e.enabled).map((e) => e.sampleId),
   );
   const activeExtensions = EXTENSION_SAMPLES.filter((s) =>
     enabledSampleIds.has(s.id),
   );
+  const setEnabledExt = useMutation(api.extensions.setEnabled);
+  const removeExt = useMutation(api.extensions.remove);
+  const installedStoreExts = installed.filter(
+    (e) => e.sampleId.startsWith("cws:"),
+  );
+  const enabledStoreExts = installedStoreExts.filter((e) => e.enabled);
   const walletInstalled = enabledSampleIds.has("wallet-provider");
   const ensInstalled = enabledSampleIds.has("ens-resolver");
 
@@ -825,23 +870,66 @@ export default function Browse() {
               <Puzzle className="size-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuContent align="end" className="w-72">
             <DropdownMenuLabel>Extensions</DropdownMenuLabel>
-            {activeExtensions.length === 0 ? (
+            {activeExtensions.length === 0 && installedStoreExts.length === 0 ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">
                 No extensions installed yet.
               </p>
             ) : (
-              activeExtensions.map((ext) => {
-                const Icon = EXTENSION_ICONS[ext.id] ?? Puzzle;
-                return (
-                  <DropdownMenuItem key={ext.id} className="gap-2.5">
-                    <Icon className="size-4 text-muted-foreground" />
-                    <span className="flex-1 truncate text-xs">{ext.name}</span>
-                    <Check className="size-3.5 text-foreground" />
+              <>
+                {activeExtensions.map((ext) => {
+                  const Icon = EXTENSION_ICONS[ext.id] ?? Puzzle;
+                  const row = installed.find((e) => e.sampleId === ext.id);
+                  return (
+                    <DropdownMenuItem
+                      key={ext.id}
+                      className="group gap-2.5"
+                      onSelect={(e) => e.preventDefault()}
+                    >
+                      <Icon className="size-4 text-muted-foreground" />
+                      <span className="flex-1 truncate text-xs">{ext.name}</span>
+                      <Switch
+                        checked={row?.enabled ?? true}
+                        onCheckedChange={(v) =>
+                          setEnabledExt({ sampleId: ext.id, enabled: v })
+                        }
+                        className="scale-[0.8]"
+                      />
+                    </DropdownMenuItem>
+                  );
+                })}
+                {enabledStoreExts.map((ext) => (
+                  <DropdownMenuItem
+                    key={ext._id}
+                    className="group gap-2.5"
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    {ext.iconUrl ? (
+                      <img
+                        src={ext.iconUrl}
+                        alt=""
+                        className="size-4 rounded"
+                        onError={(e) => {
+                          e.currentTarget.style.visibility = "hidden";
+                        }}
+                      />
+                    ) : (
+                      <Puzzle className="size-4 text-muted-foreground" />
+                    )}
+                    <span className="flex-1 truncate text-xs">
+                      {ext.name ?? "Store extension"}
+                    </span>
+                    <Switch
+                      checked={ext.enabled}
+                      onCheckedChange={(v) =>
+                        setEnabledExt({ sampleId: ext.sampleId, enabled: v })
+                      }
+                      className="scale-[0.8]"
+                    />
                   </DropdownMenuItem>
-                );
-              })
+                ))}
+              </>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -1014,6 +1102,37 @@ export default function Browse() {
             >
               Save browsing history
             </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Globe className="size-3.5" />
+                Open in another browser
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-64">
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void installPwa();
+                    toast("Installing Freman as your desktop browser…");
+                  }}
+                >
+                  <Chrome className="size-3.5" />
+                  <span className="flex-1">Install Freman</span>
+                  <DropdownMenuShortcut>PWA</DropdownMenuShortcut>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    const url = navDisplay(activeTab.entries[activeTab.idx]);
+                    navigator.clipboard
+                      .writeText(url)
+                      .then(() => toast.success("Page link copied"))
+                      .catch(() => toast.error("Copy failed"));
+                  }}
+                >
+                  <Globe className="size-3.5" />
+                  Copy page link instead
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() => pushNav(activeTab.id, { kind: "settings" })}
@@ -1788,11 +1907,29 @@ const STORE_DEFAULT_QUERIES = [
   "nft",
   "crypto",
   "defi",
+  "ad blocker",
+  "password manager",
+  "screenshot",
+  "productivity",
+  "dark mode",
+];
+
+const STORE_CATEGORIES = [
+  { id: "extensions", label: "Extensions", query: "web3 wallet" },
+  { id: "themes", label: "Themes", query: "theme" },
+  { id: "games", label: "Games", query: "game" },
 ];
 
 function StorePage({ onNavigate }: { onNavigate: (url: string) => void }) {
   const searchStore = useAction(api.webstore.search);
+  const installStore = useMutation(api.extensions.installStoreExtension);
+  const installedRows = useQuery(api.extensions.listInstalled) ?? [];
+  const installedIds = useMemo(
+    () => new Set(installedRows.map((r) => r.sampleId)),
+    [installedRows],
+  );
 
+  const [category, setCategory] = useState("extensions");
   const [query, setQuery] = useState("");
   const [term, setTerm] = useState<string | null>(null);
   const [results, setResults] = useState<StoreCard[]>([]);
@@ -1853,6 +1990,26 @@ function StorePage({ onNavigate }: { onNavigate: (url: string) => void }) {
             Search
           </Button>
         </form>
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-2 border-b border-border pb-5">
+        {STORE_CATEGORIES.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => {
+              setCategory(c.id);
+              setQuery(c.query);
+              run(c.query);
+            }}
+            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+              category === c.id
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {c.label}
+          </button>
+        ))}
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
@@ -1958,6 +2115,36 @@ function StorePage({ onNavigate }: { onNavigate: (url: string) => void }) {
                     >
                       View in browser
                     </Button>
+                    {installedIds.has(`cws:${card.id}`) ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full"
+                        disabled
+                      >
+                        <Check className="mr-1 size-3.5" />
+                        Added
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() =>
+                          installStore({
+                            storeId: card.id,
+                            name: card.name,
+                            iconUrl: card.icon ?? undefined,
+                          })
+                            .then(() =>
+                              toast.success(`${card.name} added to Freman`),
+                            )
+                            .catch(() => toast.error("Could not add extension"))
+                        }
+                      >
+                        <Plus className="mr-1 size-3.5" />
+                        Add to Freman
+                      </Button>
+                    )}
                     <a
                       href={card.url}
                       target="_blank"

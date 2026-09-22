@@ -130,6 +130,114 @@ export const EXTENSION_SAMPLES: ExtensionSample[] = [
     apis: ["tabCapture", "offscreen"],
     source: `${SAMPLES_REPO}/api-samples/tabCapture`,
   },
+  {
+    id: "snapshot-voting",
+    name: "Snapshot Voting",
+    description:
+      "Vote on DAO proposals from a side panel — connects to Snapshot with your primary account.",
+    category: "Web3",
+    apis: ["sidePanel", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.snapshot-voting`,
+  },
+  {
+    id: "gas-tracker",
+    name: "Gas Tracker",
+    description:
+      "Live gas-price badge on the toolbar, refreshed every block across L1s and L2s.",
+    category: "Web3",
+    apis: ["action", "alarms"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.gas-tracker`,
+  },
+  {
+    id: "ipfs-gateway",
+    name: "IPFS Gateway",
+    description:
+      "Rewrites public IPFS gateway links to your preferred pinning service automatically.",
+    category: "Web3",
+    apis: ["declarativeNetRequest", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.ipfs-gateway`,
+  },
+  {
+    id: "token-approval-auditor",
+    name: "Token Approval Auditor",
+    description:
+      "Lists every ERC-20 allowance your address has granted and flags unlimited ones.",
+    category: "Web3",
+    apis: ["scripting", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.token-approval-auditor`,
+  },
+  {
+    id: "phishing-shield",
+    name: "Phishing Shield",
+    description:
+      "Heuristic and blocklist checks on every navigation, with a warning page for look-alike domains.",
+    category: "Privacy",
+    apis: ["webNavigation", "declarativeNetRequest"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.phishing-shield`,
+  },
+  {
+    id: "clipboard-history",
+    name: "Clipboard History",
+    description:
+      "Keeps the last 20 clipboard entries searchable from the action popup.",
+    category: "Productivity",
+    apis: ["clipboardRead", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.clipboard-history`,
+  },
+  {
+    id: "quick-notes-sidebar",
+    name: "Quick Notes Sidebar",
+    description:
+      "A persistent side panel for notes that survive across tabs and sessions.",
+    category: "Productivity",
+    apis: ["sidePanel", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.quick-notes`,
+  },
+  {
+    id: "json-viewer-pro",
+    name: "JSON Viewer Pro",
+    description:
+      "Pretty-prints JSON responses into a collapsible tree with search and path copy.",
+    category: "Developer tools",
+    apis: ["scripting", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.json-viewer`,
+  },
+  {
+    id: "readability-dark",
+    name: "Readability Dark",
+    description:
+      "Applies a tuned dark filter to any page that lacks native dark-mode support.",
+    category: "Interface",
+    apis: ["scripting", "activeTab"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.readability-dark`,
+  },
+  {
+    id: "csv-table-capture",
+    name: "CSV Table Capture",
+    description:
+      "Select any HTML table on a page and export it as clean CSV with one click.",
+    category: "Productivity",
+    apis: ["activeTab", "scripting"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.csv-table-capture`,
+  },
+  {
+    id: "session-keyguard",
+    name: "Session Keyguard",
+    description:
+      "Sign-in-with-Ethereum requests must match an allow-listed origin before they reach your wallet.",
+    category: "Privacy",
+    apis: ["webRequest", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.session-keyguard`,
+  },
+  {
+    id: "image-rights-guard",
+    name: "Image Rights Guard",
+    description:
+      "Blocks drag-out and long-press saving of images on sites that declare copyright protection.",
+    category: "Interface",
+    apis: ["contentScripts", "storage"],
+    source: `${SAMPLES_REPO}/functional-samples/sample.image-rights-guard`,
+  },
 ];
 
 export const EXTENSION_CATEGORIES: ExtensionCategory[] = [

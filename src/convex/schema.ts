@@ -37,9 +37,16 @@ const schema = defineSchema(
     // Extension samples installed by a user into their browser build.
     installedExtensions: defineTable({
       userId: v.id("users"),
-      sampleId: v.string(), // slug from the static sample catalog
+      // For catalog samples: the sample slug. For Chrome Web Store installs:
+      // "cws:<storeId>".
+      sampleId: v.string(),
       enabled: v.boolean(),
       installedAt: v.number(),
+      // Display metadata (store installs have no static catalog entry).
+      name: v.optional(v.string()),
+      iconUrl: v.optional(v.string()),
+      // "sample" (default) or "store".
+      kind: v.optional(v.string()),
     })
       .index("by_user", ["userId"])
       .index("by_user_sample", ["userId", "sampleId"]),

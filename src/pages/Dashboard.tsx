@@ -649,6 +649,84 @@ function ExtensionsSection() {
       </div>
       )}
 
+      {/* Installed from the Chrome Web Store */}
+      {(() => {
+        const storeRows = (installed ?? []).filter((e) =>
+          e.sampleId.startsWith("cws:"),
+        );
+        return (
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              Installed from the Chrome Web Store
+            </p>
+            {storeRows.length === 0 ? (
+              <p className="mt-3 text-sm text-muted-foreground">
+                Nothing here yet — open Freman's browser store
+                (freman://store), pick any extension, and "Add to Freman".
+                Your installs sync here.
+              </p>
+            ) : (
+              <div className="mt-3 overflow-hidden rounded-xl border border-border">
+                {storeRows.map((row, i) => (
+                  <div
+                    key={row._id}
+                    className={`flex flex-wrap items-center gap-3 px-5 py-3.5 ${
+                      i === 0 ? "" : "border-t border-border"
+                    }`}
+                  >
+                    {row.iconUrl ? (
+                      <img
+                        src={row.iconUrl}
+                        alt=""
+                        className="size-8 rounded-lg"
+                        onError={(e) => {
+                          e.currentTarget.style.visibility = "hidden";
+                        }}
+                      />
+                    ) : (
+                      <div className="grid size-8 place-items-center rounded-lg bg-muted">
+                        <Puzzle className="size-4 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {row.name ?? "Store extension"}
+                      </p>
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">
+                        {row.sampleId.replace("cws:", "")}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <Switch
+                        checked={row.enabled}
+                        onCheckedChange={(enabled) =>
+                          setEnabled({ sampleId: row.sampleId, enabled })
+                        }
+                      />
+                      <span className="w-16 text-xs text-muted-foreground">
+                        {row.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() =>
+                          remove({ sampleId: row.sampleId })
+                            .then(() => toast.success("Extension removed"))
+                            .catch(() => toast.error("Could not remove"))
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Live Chrome Web Store search */}
       <StoreSearchSection />
 
