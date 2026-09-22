@@ -619,6 +619,22 @@ export default function Browse() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visitKey, settings?.saveHistory]);
 
+  /* --------------------------- protocol launches --------------------------- */
+
+  /**
+   * web+freman://open/<url> launches land here after main.tsx stashes the
+   * destination in sessionStorage. It's consumed by the browser's own
+   * navigation system — pushNav/openInTab — exactly like an omnibox visit.
+   */
+  useEffect(() => {
+    const destination = sessionStorage.getItem("freman:proto-launch");
+    if (!destination) return;
+    sessionStorage.removeItem("freman:proto-launch");
+    openInTab(destination);
+    toast("Opened from Freman protocol link", { duration: 3000 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ---------------------------- find in page ------------------------------ */
 
   const findableText =

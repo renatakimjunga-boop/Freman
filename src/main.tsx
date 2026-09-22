@@ -6,8 +6,16 @@ import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient, useQuery } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
+import { toast } from "sonner";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router";
+import {
+  applyServiceWorkerUpdate,
+  clearProtoQuery,
+  extractProtoDestination,
+  registerProtocolHandler,
+  registerServiceWorker,
+} from "@/lib/pwa";
 import "./index.css";
 
 // Lazy load route components for better code splitting
@@ -117,6 +125,62 @@ const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
 
 
+/**
+ * PWA bootstrap: service-worker registration/update handling and the
+ * "web+freman" protocol handler. Runs once, outside the router.
+ */
+function PwaBootstrap() {
+  useEffect(() => {
+    void registerServiceWorker();
+
+    const onReady = () => {
+      toast.info("A new version of Freman is installed.", {
+        description: "It will apply on next launch — or reload now.",
+        action: { label: "Reload", onClick: () => void applyServiceWorkerUpdate() },
+        duration: 10000,
+      });
+    };
+    window.addEventListener("freman:sw-update-ready", onReady);
+    return () => window.removeEventListener("freman:sw-update-ready", onReady);
+  }, []);
+
+  useEffect(() => {
+    // Protocol handling: both the manifest-registered handler and the
+    // runtime registration route to /?proto=<destination>.
+    const destination = extractProtoDestination(window.location.search);
+    if (destination) {
+      sessionStorage.setItem("freman:proto-launch", destination);
+      clearProtoQuery();
+    }
+    registerProtocolHandler();
+  }, []);
+
+  return null;
+}
+
+/**
+ * Consumes a pending web+freman protocol launch by sending the browser to
+ * /browse, where the existing navigation system picks the destination up
+ * from sessionStorage (Browse owns consuming + clearing it).
+ */
+function ProtocolLaunchSync() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Re-check whenever the route changes: protocol launches can arrive while
+  // the app is already open (focus-existing client mode), not just at boot.
+  useEffect(() => {
+    if (
+      sessionStorage.getItem("freman:proto-launch") &&
+      location.pathname !== "/browse"
+    ) {
+      navigate("/browse", { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
+  return null;
+}
+
 function RouteSyncer() {
   const location = useLocation();
   useEffect(() => {
@@ -149,8 +213,10 @@ createRoot(document.getElementById("root")!).render(
       </ToolbarErrorBoundary>
       <ConvexAuthProvider client={convex}>
         <ThemeSync />
+        <PwaBootstrap />
         <BrowserRouter>
           <RouteSyncer />
+          <ProtocolLaunchSync />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<Landing />} />
