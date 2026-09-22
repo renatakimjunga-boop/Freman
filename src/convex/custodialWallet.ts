@@ -1062,3 +1062,462 @@ async function sendTron(
     explorerUrl: explorerTemplate.replace("$TX", txId),
   };
 }
+
+/* ------------------------------ vault recovery ------------------------------ */
+
+/**
+ * Reveal the user's master recovery seed (64 hex chars = 32 bytes of
+ * entropy). Every account key on every chain derives from it, so this is
+ * the single most sensitive secret in Freman. Requires the explicit
+ * `confirmed: true` literal — the client must gate this behind a typed
+ * acknowledgement — and is never logged.
+ */
+export const revealVaultSeed = action({
+  args: { confirmed: v.literal(true) },
+  returns: v.object({ seedHex: v.string() }),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Not signed in");
+    const seed = await masterSeed(ctx, userId);
+    return { seedHex: seed.toString("hex") };
+  },
+});
+
+/**
+ * Export an account's private key. Legacy rows carry their own encrypted
+ * key; vault rows are re-derived from the master seed at the account's
+ * derivation index and verified against the stored address.
+ */
+export const revealAccountKey = action({
+  args: { accountId: v.id("walletAccounts"), confirmed: v.literal(true) },
+  returns: v.object({
+    address: v.string(),
+    chainType: v.string(),
+    encoding: v.string(), // "hex" (EVM / Tron) or "base58" (Solana)
+    privateKey: v.string(),
+  }),
+  handler: async (ctx, { accountId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Not signed in");
+    const account = await ctx.runQuery(api.wallet.getForSigning, { accountId });
+    if (!account) throw new Error("Account not found");
+    const chainType = (account.chainType as ChainType | undefined) ?? "evm";
+
+    if (account.encryptedPrivateKey) {
+      return {
+        address: account.address,
+        chainType,
+        encoding: "hex",
+        privateKey: decryptSecret(account.encryptedPrivateKey),
+      };
+    }
+
+    const seed = await masterSeed(ctx, userId);
+    const index = account.derivationIndex ?? 0;
+    if (chainType === "solana") {
+      const derived = deriveSolana(seed, index);
+      if (derived.address !== account.address) {
+        throw new Error("Derived key does not match this account");
+      }
+      return {
+        address: account.address,
+        chainType,
+        encoding: "base58",
+        privateKey: base58Encode(derived.privateKey),
+      };
+    }
+    if (chainType === "tron") {
+      const derived = deriveTron(seed, index);
+      if (derived.address !== account.address) {
+        throw new Error("Derived key does not match this account");
+      }
+      return {
+        address: account.address,
+        chainType,
+        encoding: "hex",
+        privateKey: derived.privateKey,
+      };
+    }
+    const derived = deriveEvm(seed, index);
+    if (derived.address.toLowerCase() !== account.address.toLowerCase()) {
+      throw new Error("Derived key does not match this account");
+    }
+    return {
+      address: account.address,
+      chainType,
+      encoding: "hex",
+      privateKey: derived.privateKey,
+    };
+  },
+});
+
+/* ----------------------------------- swap ---------------------------------- */
+
+/**
+ * Token swaps via on-chain liquidity aggregators, executed custodially:
+ *  - Solana: Jupiter (public lite API, no key) — quote, sign, broadcast.
+ *  - EVM: 0x Swap API v2 (requires ZEROX_API_KEY) — approval + swap tx.
+ * Mainnet only — aggregators have no meaningful liquidity on testnets.
+ */
+
+const JUPITER_BASES = [
+  "https://lite-api.jup.ag/swap/v1",
+  "https://quote-api.jup.ag/v6",
+];
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const ZEROX_PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+
+function tokenDecimalsFor(network: string, token: string): number {
+  if (token === "native") {
+    return network.startsWith("solana") ? 9 : network.startsWith("tron") ? 6 : 18;
+  }
+  const known = KNOWN_TOKENS[network] ?? [];
+  const match = known.find((t) => t.address === token);
+  if (!match) throw new Error(`Unknown token ${token} on ${network}`);
+  return match.decimals;
+}
+
+function humanToRaw(amount: string, decimals: number): string {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("Amount must be a positive number");
+  return BigInt(Math.floor(n * 10 ** decimals)).toString();
+}
+
+interface JupiterQuote {
+  inAmount: string;
+  outAmount: string;
+  priceImpactPct?: string;
+}
+
+async function jupiterQuote(
+  inputMint: string,
+  outputMint: string,
+  amountRaw: string,
+  slippageBps: number,
+): Promise<{ quote: JupiterQuote; base: string }> {
+  let lastError: unknown = new Error("Jupiter unavailable");
+  for (const base of JUPITER_BASES) {
+    try {
+      const res = await fetch(
+        `${base}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountRaw}&slippageBps=${slippageBps}`,
+      );
+      if (!res.ok) throw new Error(`Jupiter quote failed (${res.status})`);
+      return { quote: (await res.json()) as JupiterQuote, base };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Jupiter quote failed");
+}
+
+/** Compact-u16 reader (Solana vector lengths). Returns [value, bytesUsed]. */
+function readCompactU16(bytes: Uint8Array, offset: number): [number, number] {
+  let value = 0;
+  let shift = 0;
+  let used = 0;
+  for (;;) {
+    const b = bytes[offset + used];
+    used += 1;
+    value |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+    shift += 7;
+    if (shift > 28) throw new Error("Malformed transaction");
+  }
+  return [value, used];
+}
+
+/**
+ * Sign a pre-built Solana transaction (e.g. from Jupiter) at signature slot
+ * 0, verifying that the fee payer is our own address before signing.
+ */
+function signSolanaRawTx(rawB64: string, privateKey: Uint8Array, expectedPayer: string): string {
+  const raw = new Uint8Array(Buffer.from(rawB64, "base64"));
+  const [sigCount, sigCountBytes] = readCompactU16(raw, 0);
+  if (sigCount < 1) throw new Error("Malformed transaction (no signatures)");
+  const message = raw.subarray(sigCountBytes + sigCount * 64);
+  if (message.length < 4) throw new Error("Malformed transaction (short message)");
+  const numSigs = message[0] & 0x7f;
+  const [acctCount, acctCountBytes] = readCompactU16(message, 3);
+  if (numSigs < 1 || acctCount < 1) throw new Error("Malformed swap transaction");
+  const payer = base58Encode(message.subarray(3 + acctCountBytes, 3 + acctCountBytes + 32));
+  if (payer !== expectedPayer) {
+    throw new Error("Swap transaction fee payer does not match this account");
+  }
+  const signature = ed25519.sign(message, privateKey);
+  raw.set(signature, sigCountBytes);
+  return Buffer.from(raw).toString("base64");
+}
+
+/** Swap quote — preview only, no funds move. */
+export const swapQuote = action({
+  args: {
+    accountId: v.id("walletAccounts"),
+    network: v.string(),
+    sellToken: v.string(), // "native" or token address
+    buyToken: v.string(),
+    amount: v.string(), // human units
+    slippageBps: v.optional(v.number()),
+  },
+  returns: v.object({
+    provider: v.string(),
+    sellAmountRaw: v.string(),
+    buyAmountRaw: v.string(),
+    sellDecimals: v.number(),
+    buyDecimals: v.number(),
+    priceImpactPct: v.optional(v.string()),
+  }),
+  handler: async (ctx, { accountId, network, sellToken, buyToken, amount, slippageBps }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Not signed in");
+    const account = await ctx.runQuery(api.wallet.getForSigning, { accountId });
+    if (!account) throw new Error("Account not found");
+    const slippage = Math.min(Math.max(slippageBps ?? 50, 1), 3000);
+
+    if (network === "solana:mainnet") {
+      const inputMint = sellToken === "native" ? SOL_MINT : sellToken;
+      const outputMint = buyToken === "native" ? SOL_MINT : buyToken;
+      const decimals = tokenDecimalsFor(network, sellToken);
+      const amountRaw = humanToRaw(amount, decimals);
+      const { quote } = await jupiterQuote(inputMint, outputMint, amountRaw, slippage);
+      return {
+        provider: "jupiter",
+        sellAmountRaw: amountRaw,
+        buyAmountRaw: quote.outAmount,
+        sellDecimals: decimals,
+        buyDecimals: tokenDecimalsFor(network, buyToken),
+        priceImpactPct: quote.priceImpactPct,
+      };
+    }
+
+    if (EVM_CHAINS[network] && !EVM_CHAINS[network].testnet) {
+      const key = process.env.ZEROX_API_KEY;
+      if (!key) {
+        throw new Error("EVM swaps need a 0x API key — add ZEROX_API_KEY in the Keys tab.");
+      }
+      const chainId = EVM_CHAINS[network].chainId;
+      const sellDecimals = tokenDecimalsFor(network, sellToken);
+      const sellAmountRaw = humanToRaw(amount, sellDecimals);
+      const sellTokenParam = sellToken === "native" ? "ETH" : sellToken;
+      const buyTokenParam = buyToken === "native" ? "ETH" : buyToken;
+      const res = await fetch(
+        `https://api.0x.org/swap/permit2/quote?chainId=${chainId}&sellToken=${sellTokenParam}&buyToken=${buyTokenParam}&sellAmount=${sellAmountRaw}&taker=${account.address}&slippageBps=${slippage}`,
+        { headers: { "0x-api-key": key, "0x-version": "v2" } },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { reason?: string; description?: string };
+        throw new Error(body.reason ?? body.description ?? `0x quote failed (${res.status})`);
+      }
+      const quote = (await res.json()) as { buyAmount: string; sellAmount: string; issues?: { priceImpact?: { impact?: { bps?: string } } } };
+      return {
+        provider: "0x",
+        sellAmountRaw: quote.sellAmount ?? sellAmountRaw,
+        buyAmountRaw: quote.buyAmount,
+        sellDecimals,
+        buyDecimals: tokenDecimalsFor(network, buyToken),
+        priceImpactPct: quote.issues?.priceImpact?.impact?.bps,
+      };
+    }
+
+    throw new Error("Swaps are mainnet-only — testnets have no aggregator liquidity.");
+  },
+});
+
+/**
+ * Execute a token swap from a custodial account. Quotes internally (fresh
+ * price), signs with the account's derived key and broadcasts. Returns the
+ * swap hash plus, on ERC-20 sells, the approval hash if one was needed.
+ */
+export const swapTokens = action({
+  args: {
+    accountId: v.id("walletAccounts"),
+    network: v.string(),
+    sellToken: v.string(),
+    buyToken: v.string(),
+    amount: v.string(),
+    slippageBps: v.optional(v.number()),
+    confirmed: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    hash: v.string(),
+    explorerUrl: v.string(),
+    buyAmountRaw: v.string(),
+    buyDecimals: v.number(),
+    approvalHash: v.optional(v.string()),
+  }),
+  handler: async (
+    ctx,
+    { accountId, network, sellToken, buyToken, amount, slippageBps, confirmed },
+  ): Promise<{
+    hash: string;
+    explorerUrl: string;
+    buyAmountRaw: string;
+    buyDecimals: number;
+    approvalHash?: string;
+  }> => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Not signed in");
+    const account = await ctx.runQuery(api.wallet.getForSigning, { accountId });
+    if (!account) throw new Error("Account not found");
+    const chainType = (account.chainType as ChainType | undefined) ?? "evm";
+    const slippage = Math.min(Math.max(slippageBps ?? 50, 1), 3000);
+    const isMainnet =
+      network === "solana:mainnet" ||
+      (Boolean(EVM_CHAINS[network]) && !EVM_CHAINS[network].testnet);
+    if (!isMainnet) {
+      throw new Error("Swaps are mainnet-only — testnets have no aggregator liquidity.");
+    }
+    if (network.startsWith("tron:")) {
+      throw new Error("Tron swaps are not supported yet.");
+    }
+    if (!confirmed) {
+      throw new Error("Mainnet swaps move real funds and must be explicitly confirmed.");
+    }
+
+    /* ------------------------------ Solana ------------------------------ */
+    if (network === "solana:mainnet") {
+      if (chainType !== "solana") throw new Error("This account is not a Solana account");
+      const inputMint = sellToken === "native" ? SOL_MINT : sellToken;
+      const outputMint = buyToken === "native" ? SOL_MINT : buyToken;
+      const sellDecimals = tokenDecimalsFor(network, sellToken);
+      const amountRaw = humanToRaw(amount, sellDecimals);
+      const { quote, base } = await jupiterQuote(inputMint, outputMint, amountRaw, slippage);
+
+      const swapRes = await fetch(`${base}/swap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quoteResponse: quote,
+          userPublicKey: account.address,
+          wrapAndUnwrapSol: true,
+        }),
+      });
+      if (!swapRes.ok) {
+        throw new Error(`Jupiter swap build failed (${swapRes.status})`);
+      }
+      const { swapTransaction } = (await swapRes.json()) as { swapTransaction?: string };
+      if (!swapTransaction) throw new Error("Jupiter returned no transaction");
+
+      const seed = await masterSeed(ctx, userId);
+      const { privateKey } = deriveSolana(seed, account.derivationIndex ?? 0);
+      if (base58Encode(ed25519.getPublicKey(privateKey)) !== account.address) {
+        throw new Error("Derived key does not match this account");
+      }
+      const signed = signSolanaRawTx(swapTransaction, privateKey, account.address);
+      const net = SOLANA_NETWORKS[network];
+      const hash = await solanaRpc<string>(net.endpoint, "sendTransaction", [
+        signed,
+        { encoding: "base64", skipPreflight: false },
+      ]);
+      const txHash = typeof hash === "string" ? hash : "unknown";
+      await ctx.runMutation(api.transactions.record, {
+        accountId,
+        hash: txHash,
+        from: account.address,
+        to: outputMint,
+        valueWei: amountRaw,
+        chainId: 0,
+        chain: network,
+        status: "pending",
+      });
+      return {
+        hash: txHash,
+        explorerUrl: net.explorer.replace("$TX", txHash),
+        buyAmountRaw: quote.outAmount,
+        buyDecimals: tokenDecimalsFor(network, buyToken),
+      };
+    }
+
+    /* -------------------------------- EVM -------------------------------- */
+    if (chainType !== "evm") throw new Error("This account is not an EVM account");
+    const key = process.env.ZEROX_API_KEY;
+    if (!key) {
+      throw new Error("EVM swaps need a 0x API key — add ZEROX_API_KEY in the Keys tab.");
+    }
+    const evmChain = EVM_CHAINS[network];
+    const provider = await evmProvider(evmChain);
+    const sellDecimals = tokenDecimalsFor(network, sellToken);
+    const sellAmountRaw = humanToRaw(amount, sellDecimals);
+    const sellTokenParam = sellToken === "native" ? "ETH" : sellToken;
+    const buyTokenParam = buyToken === "native" ? "ETH" : buyToken;
+
+    const quoteRes = await fetch(
+      `https://api.0x.org/swap/permit2/quote?chainId=${evmChain.chainId}&sellToken=${sellTokenParam}&buyToken=${buyTokenParam}&sellAmount=${sellAmountRaw}&taker=${account.address}&slippageBps=${slippage}`,
+      { headers: { "0x-api-key": key, "0x-version": "v2" } },
+    );
+    if (!quoteRes.ok) {
+      const body = (await quoteRes.json().catch(() => ({}))) as { reason?: string; description?: string };
+      throw new Error(body.reason ?? body.description ?? `0x quote failed (${quoteRes.status})`);
+    }
+    const quote = (await quoteRes.json()) as {
+      buyAmount: string;
+      transaction: { to: string; data: string; value?: string; gas?: string; gasPrice?: string };
+    };
+
+    let seed: Buffer | null = null;
+    let privateKey: string;
+    if (account.encryptedPrivateKey) {
+      privateKey = decryptSecret(account.encryptedPrivateKey);
+    } else {
+      seed = await masterSeed(ctx, userId);
+      privateKey = deriveEvm(seed, account.derivationIndex ?? 0).privateKey;
+    }
+    const signer = new EvmWallet(privateKey, provider);
+    if (signer.address.toLowerCase() !== account.address.toLowerCase()) {
+      throw new Error("Stored key does not match this account");
+    }
+
+    let approvalHash: string | undefined;
+    const needsApproval = sellToken !== "native";
+    if (needsApproval) {
+      const erc20 = new Contract(
+        sellToken,
+        [
+          "function allowance(address owner, address spender) view returns (uint256)",
+          "function approve(address spender, uint256 amount) returns (bool)",
+        ],
+        provider,
+      );
+      const current: bigint = await erc20.allowance(account.address, ZEROX_PERMIT2);
+      if (current < BigInt(sellAmountRaw)) {
+        const approval = await signer.sendTransaction({
+          to: sellToken,
+          data: (erc20.interface as unknown as {
+            encodeFunctionData: (name: string, params: unknown[]) => string;
+          }).encodeFunctionData("approve", [ZEROX_PERMIT2, 2n ** 256n - 1n]),
+        });
+        await approval.wait();
+        approvalHash = approval.hash;
+      }
+    }
+
+    const swapTx = await signer.sendTransaction({
+      to: quote.transaction.to,
+      data: quote.transaction.data,
+      value: quote.transaction.value ? BigInt(quote.transaction.value) : undefined,
+      gasLimit: quote.transaction.gas ? BigInt(quote.transaction.gas) : undefined,
+      gasPrice: quote.transaction.gasPrice ? BigInt(quote.transaction.gasPrice) : undefined,
+    });
+    const receipt = await swapTx.wait();
+
+    await ctx.runMutation(api.transactions.record, {
+      accountId,
+      hash: swapTx.hash,
+      from: account.address,
+      to: buyTokenParam,
+      valueWei: sellAmountRaw,
+      chainId: evmChain.chainId,
+      chain: network,
+      status: receipt ? "confirmed" : "pending",
+      blockNumber: receipt?.blockNumber,
+      gasUsedWei: receipt?.gasUsed?.toString(),
+    });
+
+    return {
+      hash: swapTx.hash,
+      explorerUrl: `${evmChain.explorer}/tx/${swapTx.hash}`,
+      buyAmountRaw: quote.buyAmount,
+      buyDecimals: tokenDecimalsFor(network, buyToken),
+      approvalHash,
+    };
+  },
+});

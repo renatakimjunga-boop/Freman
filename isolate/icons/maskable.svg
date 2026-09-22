@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!--
+    Freman maskable app icon — same wordmark as icon.svg, scaled to fit the
+    80% safe zone (content fully visible when the OS applies a circular mask).
+  -->
+  <defs>
+    <linearGradient
+      id="freman-word"
+      gradientUnits="userSpaceOnUse"
+      x1="1.25"
+      y1="45"
+      x2="97.5"
+      y2="45"
+    >
+      <stop offset="0" stop-color="#f42a17"/>
+      <stop offset="0.32" stop-color="#f55f4e"/>
+      <stop offset="0.58" stop-color="#f8a294"/>
+      <stop offset="0.82" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" fill="#000000"/>
+
+  <g transform="translate(7.7 13.6) scale(0.44)" fill="url(#freman-word)" stroke="url(#freman-word)">
+    <!-- F -->
+    <rect x="1.25" y="36" width="4" height="18" stroke="none"/>
+    <rect x="1.25" y="36" width="11" height="4" stroke="none"/>
+    <rect x="1.25" y="44.3" width="8.6" height="4" stroke="none"/>
+
+    <!-- r -->
+    <rect x="15.75" y="40" width="4" height="14" stroke="none"/>
+    <path d="M 19.25 45.75 A 3.75 3.75 0 0 1 23 42" fill="none" stroke-width="4"/>
+
+    <!-- e -->
+    <path d="M 40.51 50.15 A 5.5 5.5 0 1 0 37.42 52.31" fill="none" stroke-width="4"/>
+    <rect x="28.5" y="43.6" width="15" height="4" stroke="none"/>
+
+    <!-- m -->
+    <path
+      d="M 49 54 V 46 A 3.5 3.5 0 0 1 56 46 V 54 M 56 54 V 46 A 3.5 3.5 0 0 1 63 46 V 54"
+      fill="none"
+      stroke-width="4"
+    />
+
+    <!-- a -->
+    <circle cx="75.5" cy="47" r="5.5" fill="none" stroke-width="4"/>
+    <rect x="79" y="40" width="4" height="14" stroke="none"/>
+
+    <!-- n -->
+    <path d="M 88.5 54 V 46 A 3.5 3.5 0 0 1 95.5 46 V 54" fill="none" stroke-width="4"/>
+  </g>
+</svg>

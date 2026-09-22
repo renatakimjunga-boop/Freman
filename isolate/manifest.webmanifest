@@ -1,17 +1,53 @@
 {
-  "name": "Freman",
+  "id": "/",
+  "name": "Freman Browser",
   "short_name": "Freman",
-  "description": "Freman — the Web3 browser for everyone.",
-  "start_url": "/",
+  "description": "Freman — the Web3 browser for everyone. Browse, search the web, run extensions, and use a wallet built into the browser's core.",
+  "start_url": "/browse?source=pwa",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["browser", "utilities", "productivity"],
   "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     }
-  ]
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "web+freman",
+      "url": "/?proto=%s"
+    }
+  ],
+  "side_panel": {
+    "default_path": "/browse?source=edge-panel"
+  },
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "prefer_related_applications": false
 }
