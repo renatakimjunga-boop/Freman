@@ -1121,9 +1121,15 @@ export default function Browse() {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() => {
-                    const url = navDisplay(activeTab.entries[activeTab.idx]);
+                    const nav = activeTab.entries[activeTab.idx];
+                    if (nav?.kind !== "site") {
+                      toast(
+                        "This page lives inside Freman — copy works for web pages.",
+                      );
+                      return;
+                    }
                     navigator.clipboard
-                      .writeText(url)
+                      .writeText(nav.url)
                       .then(() => toast.success("Page link copied"))
                       .catch(() => toast.error("Copy failed"));
                   }}
