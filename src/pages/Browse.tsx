@@ -143,10 +143,12 @@ const ETH_RE = /^[a-z0-9-]+\.eth$/i;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 /** HTTP-actions host for the embeddable page proxy. */
-const CONVEX_SITE_URL = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
-  ".convex.cloud",
-  ".convex.site",
-);
+const CONVEX_SITE_URL =
+  (import.meta.env.VITE_CONVEX_SITE_URL as string | undefined) ||
+  ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
+    ".convex.cloud",
+    ".convex.site",
+  );
 
 function shorten(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;

@@ -31,7 +31,11 @@ const UA_DESKTOP =
 const UA_MOBILE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
 
-function rewriteHtml(html: string, baseUrl: string): string {
+function rewriteHtml(
+  html: string,
+  baseUrl: string,
+  proxyOrigin: string,
+): string {
   const absolutize = (value: string): string => {
     try {
       return new URL(value, baseUrl).toString();
@@ -40,11 +44,13 @@ function rewriteHtml(html: string, baseUrl: string): string {
     }
   };
 
-  // Route every navigable/asset URL through the proxy.
+  // Route every navigable/asset URL through the proxy. Proxied URLs must be
+  // ABSOLUTE — the injected <base href> points at the target site, so a
+  // relative "/fetchProxy?…" would resolve against the target and 404.
   const proxied = (value: string): string => {
     const abs = absolutize(value);
     if (!/^https?:\/\//i.test(abs)) return abs;
-    return `/fetchProxy?url=${encodeURIComponent(abs)}`;
+    return `${proxyOrigin}/fetchProxy?url=${encodeURIComponent(abs)}`;
   };
 
   let out = html;
@@ -52,15 +58,17 @@ function rewriteHtml(html: string, baseUrl: string): string {
   // <base> would fight our own rewrites; drop it.
   out = out.replace(/<base\b[^>]*>/gi, "");
 
-  const attrs: [RegExp, string][] = [
-    [/\s(?:href|poster|data-src)\s*=\s*"([^"]*)"/gi, "$1"],
-    [/\s(?:href|poster|data-src)\s*=\s*'([^']*)'/gi, "$1"],
-    [/\s(?:src|srcset)\s*=\s*"([^"]*)"/gi, "$1"],
-    [/\s(?:src|srcset)\s*=\s*'([^']*)'/gi, "$1"],
+  // Capture the attribute NAME so we can rebuild `name="value"` exactly;
+  // reconstructing it from the match text is what mangled attributes before.
+  const attrs: RegExp[] = [
+    /\s(href|poster|data-src)\s*=\s*"([^"]*)"/gi,
+    /\s(href|poster|data-src)\s*=\s*'([^']*)'/gi,
+    /\s(src|srcset)\s*=\s*"([^"]*)"/gi,
+    /\s(src|srcset)\s*=\s*'([^']*)'/gi,
   ];
 
-  for (const [pattern] of attrs) {
-    out = out.replace(pattern, (match, url: string) => {
+  for (const pattern of attrs) {
+    out = out.replace(pattern, (match, name: string, url: string) => {
       // Skip anchors, protocols we can't proxy, and data URLs.
       if (
         !url ||
@@ -74,19 +82,24 @@ function rewriteHtml(html: string, baseUrl: string): string {
         return match;
       }
       const quote = match.includes('"') ? '"' : "'";
-      const rewritten = pattern.source.includes("srcset") && url.includes(",")
-        ? url
-            .split(",")
-            .map((candidate) => {
-              const trimmed = candidate.trim();
-              const [target, ...descriptors] = trimmed.split(/\s+/);
-              return `${proxied(target)} ${descriptors.join(" ")}`.trim();
-            })
-            .join(", ")
-        : proxied(url);
-      return ` ${match.trim().split(/\s=/)[0]}=${quote}${rewritten}${quote}`;
+      const rewritten =
+        name.toLowerCase() === "srcset" && url.includes(",")
+          ? url
+              .split(",")
+              .map((candidate) => {
+                const trimmed = candidate.trim();
+                const [target, ...descriptors] = trimmed.split(/\s+/);
+                return `${proxied(target)} ${descriptors.join(" ")}`.trim();
+              })
+              .join(", ")
+          : proxied(url);
+      return ` ${name}=${quote}${rewritten}${quote}`;
     });
   }
+
+  // Rewritten subresources come from our origin, so Subresource-Integrity
+  // hashes would no longer match and scripts/styles would be blocked.
+  out = out.replace(/\sintegrity\s*=\s*("[^"]*"|'[^']*')/gi, "");
 
   // Neutralize meta-refresh redirects (they'd escape the proxy).
   out = out.replace(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*>/gi, "");
@@ -96,6 +109,59 @@ function rewriteHtml(html: string, baseUrl: string): string {
     /<base/i.test(attrsHead)
       ? match
       : `${match}\n<base href="${baseUrl}">`,
+  );
+
+  return out;
+}
+
+/**
+ * Rewrites url(...) refs and @import rules inside a stylesheet so images,
+ * fonts and nested imports also route through the proxy. Inline <style>
+ * blocks get the same treatment via rewriteHtml.
+ */
+function rewriteCss(css: string, baseUrl: string, proxyOrigin: string): string {
+  const absolutize = (value: string): string => {
+    try {
+      return new URL(value, baseUrl).toString();
+    } catch {
+      return value;
+    }
+  };
+  const proxied = (value: string): string => {
+    const abs = absolutize(value);
+    if (!/^https?:\/\//i.test(abs)) return abs;
+    return `${proxyOrigin}/fetchProxy?url=${encodeURIComponent(abs)}`;
+  };
+
+  // @import "x.css"; / @import url(x.css) — must be handled first so the
+  // imported sheet is itself fetched through the proxy and re-rewritten.
+  let out = css.replace(
+    /@import\s+(?:url\(\s*)?["']?([^"')]+)["']?\s*\)?\s*([^;]*);/gi,
+    (match, target: string) => {
+      const t = target.trim();
+      if (!t || t.startsWith("data:") || t.startsWith("blob:")) return match;
+      return match.replace(target, proxied(t));
+    },
+  );
+
+  // url(...) for backgrounds, fonts, cursors, etc.
+  out = out.replace(
+    /url\(\s*("([^"]*)"|'([^']*)'|([^)'"][^)]*?))\s*\)/gi,
+    (match, _q, dq: string | undefined, sq: string | undefined, bare: string | undefined) => {
+      const target = (dq ?? sq ?? bare ?? "").trim();
+      if (
+        !target ||
+        target.startsWith("data:") ||
+        target.startsWith("blob:") ||
+        target.startsWith("#")
+      ) {
+        return match;
+      }
+      // Preserve the original quoting style.
+      if (dq !== undefined) return `url("${proxied(dq)}")`;
+      if (sq !== undefined) return `url('${proxied(sq)}')`;
+      return `url(${proxied(bare ?? "")})`;
+    },
   );
 
   return out;
@@ -270,8 +336,21 @@ export const fetchProxy = httpAction(async (ctx, request) => {
   }
   headers.set("access-control-allow-origin", "*");
 
-  // Non-HTML (images, fonts, css, json) passes through untouched.
+  // Stylesheets need url()/@import rewriting; everything else non-HTML
+  // (images, fonts, json) passes through untouched.
   if (!contentType.includes("text/html")) {
+    if (contentType.includes("text/css")) {
+      const css = await upstream.text();
+      const rewritten = rewriteCss(
+        css,
+        upstream.url || url,
+        new URL(request.url).origin,
+      );
+      if (!headers.get("content-type")) {
+        headers.set("content-type", contentType);
+      }
+      return new Response(rewritten, { status: upstream.status, headers });
+    }
     const buffer = await upstream.arrayBuffer();
     if (!headers.get("content-type")) {
       headers.set("content-type", contentType || "application/octet-stream");
@@ -280,7 +359,11 @@ export const fetchProxy = httpAction(async (ctx, request) => {
   }
 
   const html = await upstream.text();
-  const rewritten = rewriteHtml(html, upstream.url || url);
+  const rewritten = rewriteHtml(
+    html,
+    upstream.url || url,
+    new URL(request.url).origin,
+  );
 
   if (!headers.get("content-type")) {
     headers.set("content-type", "text/html; charset=utf-8");
