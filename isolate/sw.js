@@ -16,7 +16,7 @@
  * activates after all tabs close, unless the app calls postMessage SKIP.
  */
 
-const CACHE_VERSION = "freman-v1.0.0";
+const CACHE_VERSION = "freman-v1.1.0";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 
@@ -29,6 +29,7 @@ const PRECACHE_URLS = [
   "/icons/icon-512.png",
   "/icons/maskable-512.png",
   "/icons/apple-touch-icon.png",
+  "/splash-wordmark.svg",
 ];
 
 self.addEventListener("install", (event) => {
