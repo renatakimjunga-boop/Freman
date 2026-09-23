@@ -1511,13 +1511,27 @@ export const swapTokens = action({
       }
     }
 
-    const swapTx = await signer.sendTransaction({
+    const txRequest: {
+      to: string;
+      data: string;
+      value?: bigint;
+      gasLimit?: bigint;
+      maxFeePerGas?: bigint;
+      maxPriorityFeePerGas?: bigint;
+    } = {
       to: quote.transaction.to,
       data: quote.transaction.data,
-      value: quote.transaction.value ? BigInt(quote.transaction.value) : undefined,
-      gasLimit: quote.transaction.gas ? BigInt(quote.transaction.gas) : undefined,
-      gasPrice: quote.transaction.gasPrice ? BigInt(quote.transaction.gasPrice) : undefined,
-    });
+    };
+    if (quote.transaction.value) txRequest.value = BigInt(quote.transaction.value);
+    if (quote.transaction.gas) txRequest.gasLimit = BigInt(quote.transaction.gas);
+    if (quote.transaction.gasPrice) {
+      // 0x quotes carry a legacy gasPrice; convert to EIP-1559 fields so
+      // EIP-1559 chains don't reject a type-0 tx priced below the base fee.
+      const gasPrice = BigInt(quote.transaction.gasPrice);
+      txRequest.maxFeePerGas = gasPrice;
+      txRequest.maxPriorityFeePerGas = gasPrice / 10n;
+    }
+    const swapTx = await signer.sendTransaction(txRequest);
     const receipt = await swapTx.wait();
 
     await ctx.runMutation(api.transactions.record, {
@@ -1541,4 +1555,17 @@ export const swapTokens = action({
       approvalHash,
     };
   },
+});
+
+/* ------------------------------ status refresh ------------------------------ */
+
+/**
+ * Re-check unfinalized ("pending") transactions against their chains and
+ * update the local records. The wallet page polls this while pending rows
+ * are visible; every check goes straight to public RPC — no keys needed.
+ */
+export const refreshPendingStatuses = action({
+  args: {},
+  returns: v.object({ updated: v.number() }),
+  handler: async (ctx) => { const userId = await getAuthUserId(ctx); if (userId === null) throw new Error("Not signed in"); const all = await ctx.runQuery(api.transactions.list, {}); const pending = all.filter((t) => t.status === "pending").slice(0, 10); let updated = 0; for (const tx of pending) { try { if (EVM_CHAINS[tx.chain]) { const provider = await evmProvider(EVM_CHAINS[tx.chain]); const receipt = await provider.getTransactionReceipt(tx.hash); if (!receipt) continue; await ctx.runMutation(api.transactions.markStatus, { hash: tx.hash, status: receipt.status === 1 ? "confirmed" : "failed", blockNumber: receipt.blockNumber, gasUsedWei: receipt.gasUsed.toString(), }); updated++; } else if (tx.chain.startsWith("solana:")) { const net = SOLANA_NETWORKS[tx.chain]; if (!net) continue; const res = await solanaRpc<{ value: Array<{ confirmationStatus?: string; err: unknown } | null> }>(net.endpoint, "getSignatureStatuses", [[tx.hash]]); const status = res.value?.[0]; if (!status) continue; if (status.err != null) { await ctx.runMutation(api.transactions.markStatus, { hash: tx.hash, status: "failed" }); updated++; } else if (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized") { await ctx.runMutation(api.transactions.markStatus, { hash: tx.hash, status: "confirmed" }); updated++; } } else if (tx.chain.startsWith("tron:")) { const endpoint = (TRON_NETWORKS[tx.chain] ?? TRON_NETWORKS["tron:mainnet"]).endpoint; const res = await fetch(`${endpoint}/wallet/gettransactionbyid`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: tx.hash }), signal: AbortSignal.timeout(10_000), }); if (!res.ok) continue; const info = (await res.json()) as { ret?: Array<{ contractRet?: string }> }; const contractRet = info.ret?.[0]?.contractRet; if (!contractRet) continue; await ctx.runMutation(api.transactions.markStatus, { hash: tx.hash, status: contractRet === "SUCCESS" ? "confirmed" : "failed" }); updated++; } } catch { /* One chain's RPC failing shouldn't block the others. */ } } return { updated }; },
 });

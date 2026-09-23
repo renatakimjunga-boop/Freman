@@ -88,7 +88,8 @@ const schema = defineSchema(
       createdAt: v.number(),
     })
       .index("by_user", ["userId"])
-      .index("by_account", ["accountId"]),
+      .index("by_account", ["accountId"])
+      .index("by_account_hash", ["accountId", "hash"]),
 
     // Encrypted master seed for the multi-chain custodial wallet. One per
     // user; all account keys are derived from it and never stored raw.

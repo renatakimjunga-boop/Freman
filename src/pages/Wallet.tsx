@@ -103,6 +103,7 @@ export default function WalletPage() {
   const getTokenBalances = useAction(api.custodialWallet.getTokenBalances);
   const priceHistoryAction = useAction(api.market.priceHistory);
   const tokenPricesAction = useAction(api.market.tokenPrices);
+  const refreshStatuses = useAction(api.custodialWallet.refreshPendingStatuses);
 
   const [family, setFamily] = useState<ChainFamily>("evm");
   const [network, setNetwork] = useState<string>(DEFAULT_NETWORKS.evm);
@@ -212,6 +213,23 @@ export default function WalletPage() {
     loadChart(chartDays);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [network]);
+
+  /* Poll on-chain status while any transaction is still pending; the set of
+     pending hashes (not the query identity) drives re-arming the interval. */
+  const pendingKey = allTxs
+    .filter((t: Tx) => t.status === "pending")
+    .map((t: Tx) => t.hash)
+    .join(",");
+  useEffect(() => {
+    if (!pendingKey) return;
+    const tick = () => {
+      refreshStatuses({}).catch(() => undefined);
+    };
+    tick();
+    const id = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingKey]);
 
   const nativePrice = prices[NATIVE_PRICE_IDS[network] ?? ""]?.usd ?? 0;
   const nativeChange = prices[NATIVE_PRICE_IDS[network] ?? ""]?.change24h ?? 0;

@@ -44,12 +44,14 @@ export const record = mutation({
       throw new Error("Account not found");
     }
 
-    // Dedupe on hash.
-    const existing = await ctx.db
+    // Dedupe on hash (indexed lookup — no scan of the account's history).
+    const dupe = await ctx.db
       .query("walletTransactions")
-      .withIndex("by_account", (q) => q.eq("accountId", args.accountId))
-      .collect();
-    if (existing.some((t) => t.hash === args.hash)) return;
+      .withIndex("by_account_hash", (q) =>
+        q.eq("accountId", args.accountId).eq("hash", args.hash),
+      )
+      .unique();
+    if (dupe) return;
 
     await ctx.db.insert("walletTransactions", {
       userId,
