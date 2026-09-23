@@ -195,7 +195,11 @@ async function masterSeed(ctx: ActionCtx, userId: Id<"users">): Promise<Buffer> 
     userId,
     encryptedSeed: encryptSecret(seed),
   });
-  return Buffer.from(seed, "hex");
+  // Re-read to resolve concurrent creations: whichever vault row was
+  // persisted first wins, so every derived account shares one master seed.
+  const persisted = await ctx.runQuery(internal.wallet.getVaultForUser, { userId });
+  if (!persisted) throw new Error("Vault seed missing after creation");
+  return Buffer.from(decryptSecret(persisted), "hex");
 }
 
 /* --------------------------------- chains --------------------------------- */

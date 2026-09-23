@@ -526,7 +526,11 @@ export default function WalletPage() {
               ) : (
                 <div className="mt-3 overflow-hidden rounded-xl border border-border">
                   {txs.map((t: Tx) => {
-                    const outgoing = t.from.toLowerCase() === account.address.toLowerCase();
+                    // EVM addresses are case-insensitive; Solana/Tron base58 are not.
+                    const outgoing =
+                      accountFamily(account) === "evm"
+                        ? t.from.toLowerCase() === account.address.toLowerCase()
+                        : t.from === account.address;
                     const explorer = explorerFor(t.chain, t.hash);
                     return (
                       <div
