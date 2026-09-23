@@ -35,7 +35,7 @@ import {
   shortenAddress,
   type ChainFamily,
 } from "@/lib/networks";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowDownToLine,
@@ -45,10 +45,12 @@ import {
   Copy,
   ExternalLink,
   KeyRound,
+  Layers,
   Loader2,
   Plus,
   RefreshCw,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
@@ -104,6 +106,9 @@ export default function WalletPage() {
   const priceHistoryAction = useAction(api.market.priceHistory);
   const tokenPricesAction = useAction(api.market.tokenPrices);
   const refreshStatuses = useAction(api.custodialWallet.refreshPendingStatuses);
+  const getPortfolio = useAction(api.portfolio.getPortfolio);
+  const addTokenAction = useAction(api.tokens.addToken);
+  const removeToken = useMutation(api.tokenStore.removeToken);
 
   const [family, setFamily] = useState<ChainFamily>("evm");
   const [network, setNetwork] = useState<string>(DEFAULT_NETWORKS.evm);
@@ -113,12 +118,36 @@ export default function WalletPage() {
   const [chart, setChart] = useState<ChartState | null>(null);
   const [chartDays, setChartDays] = useState<"1" | "7" | "30">("7");
   const [prices, setPrices] = useState<Record<string, { usd: number; change24h: number }>>({});
-  const [dialog, setDialog] = useState<null | "send" | "receive" | "swap" | "security">(null);
+  const [dialog, setDialog] = useState<null | "send" | "receive" | "swap" | "security" | "add">(null);
+  const [view, setView] = useState<"network" | "all">("network");
+  const [portfolio, setPortfolio] = useState<{
+    rows: Array<{
+      network: string;
+      address: string;
+      accountId: string;
+      chainType: string;
+      symbol: string;
+      formatted: string;
+      testnet: boolean;
+    }>;
+    failed: string[];
+  } | null>(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioPrices, setPortfolioPrices] = useState<
+    Record<string, { usd: number; change24h: number }>
+  >({});
 
   const meta = networkMeta(network);
   const familyAccounts = accounts.filter((a) => accountFamily(a) === family);
   const account: Account | undefined =
     familyAccounts.find((a) => a.isPrimary) ?? familyAccounts[0];
+
+  // User-added tokens for the current EVM network (manage/remove UI).
+  const customTokens =
+    useQuery(
+      api.tokenStore.listForNetwork,
+      family === "evm" ? { network } : "skip",
+    ) ?? [];
 
   function changeFamily(f: ChainFamily) {
     setFamily(f);
@@ -231,6 +260,45 @@ export default function WalletPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingKey]);
 
+  /* Portfolio (All networks view): load per visit + on account changes. */
+  const loadPortfolio = useCallback(() => {
+    setPortfolioLoading(true);
+    getPortfolio({})
+      .then(setPortfolio)
+      .catch((err: unknown) =>
+        toast.error(err instanceof Error ? err.message : "Portfolio check failed"),
+      )
+      .finally(() => setPortfolioLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (view === "all") loadPortfolio();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, accounts.length]);
+
+  /* USD prices for every network represented in the portfolio. */
+  useEffect(() => {
+    if (view !== "all" || !portfolio) return;
+    const ids = [
+      ...new Set(portfolio.rows.map((r) => NATIVE_PRICE_IDS[r.network]).filter(Boolean)),
+    ];
+    if (ids.length === 0) {
+      setPortfolioPrices({});
+      return;
+    }
+    let cancelled = false;
+    tokenPricesAction({ ids })
+      .then((p) => {
+        if (!cancelled) setPortfolioPrices(p);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, portfolio]);
+
   const nativePrice = prices[NATIVE_PRICE_IDS[network] ?? ""]?.usd ?? 0;
   const nativeChange = prices[NATIVE_PRICE_IDS[network] ?? ""]?.change24h ?? 0;
   const tokensUsd = tokens.reduce(
@@ -271,6 +339,31 @@ export default function WalletPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="inline-flex overflow-hidden rounded-lg border border-border">
+              <button
+                onClick={() => setView("network")}
+                className={`px-3 py-1.5 text-xs transition-colors ${
+                  view === "network"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Single network
+              </button>
+              <button
+                onClick={() => setView("all")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${
+                  view === "all"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Layers className="size-3" />
+                All networks
+              </button>
+            </div>
+            {view === "network" && (
+              <>
+            <div className="inline-flex overflow-hidden rounded-lg border border-border">
               {(["evm", "solana", "tron"] as ChainFamily[]).map((f) => (
                 <button
                   key={f}
@@ -298,6 +391,8 @@ export default function WalletPage() {
                 ))}
               </SelectContent>
             </Select>
+              </>
+            )}
           </div>
           {account && (
             <button
@@ -343,6 +438,21 @@ export default function WalletPage() {
               Create {FAMILY_LABELS[family]} account
             </Button>
           </div>
+        ) : view === "all" ? (
+          <PortfolioView
+            rows={portfolio?.rows ?? []}
+            failed={portfolio?.failed ?? []}
+            loading={portfolioLoading && !portfolio}
+            prices={portfolioPrices}
+            onSwitch={(net) => {
+              const m = networkMeta(net);
+              if (!m) return;
+              changeFamily(m.family);
+              setNetwork(net);
+              setView("network");
+            }}
+            onRefresh={loadPortfolio}
+          />
         ) : (
           <>
             {/* Balance + chart */}
@@ -497,16 +607,29 @@ export default function WalletPage() {
                 <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
                   Coins & tokens
                 </h2>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 text-xs text-muted-foreground"
-                  onClick={refreshBalances}
-                  disabled={balancesLoading}
-                >
-                  <RefreshCw className={`mr-1.5 size-3 ${balancesLoading ? "animate-spin" : ""}`} />
-                  Refresh
-                </Button>
+                <div className="flex items-center gap-1">
+                  {family === "evm" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-xs text-muted-foreground"
+                      onClick={() => setDialog("add")}
+                    >
+                      <Plus className="mr-1.5 size-3" />
+                      Add token
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-xs text-muted-foreground"
+                    onClick={refreshBalances}
+                    disabled={balancesLoading}
+                  >
+                    <RefreshCw className={`mr-1.5 size-3 ${balancesLoading ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
+                </div>
               </div>
               <div className="mt-3 overflow-hidden rounded-xl border border-border">
                 <TokenRowView
@@ -515,15 +638,32 @@ export default function WalletPage() {
                   amount={native ? Number(native.formatted) : 0}
                   usdValue={native ? Number(native.formatted) * nativePrice : 0}
                 />
-                {tokens.map((t) => (
-                  <TokenRowView
-                    key={t.contract}
-                    symbol={t.symbol}
-                    name={t.name}
-                    amount={Number(t.formatted)}
-                    usdValue={(prices[TOKEN_PRICE_IDS[t.symbol]]?.usd ?? 0) * Number(t.formatted)}
-                  />
-                ))}
+                {tokens.map((t) => {
+                  const custom = customTokens.find(
+                    (c) => c.contract.toLowerCase() === t.contract.toLowerCase(),
+                  );
+                  return (
+                    <TokenRowView
+                      key={t.contract}
+                      symbol={t.symbol}
+                      name={t.name}
+                      amount={Number(t.formatted)}
+                      usdValue={(prices[TOKEN_PRICE_IDS[t.symbol]]?.usd ?? 0) * Number(t.formatted)}
+                      onRemove={
+                        custom
+                          ? () =>
+                              removeToken({ tokenId: custom._id })
+                                .then(() => toast.success(`Removed ${custom.symbol}`))
+                                .catch((err: unknown) =>
+                                  toast.error(
+                                    err instanceof Error ? err.message : "Remove failed",
+                                  ),
+                                )
+                          : undefined
+                      }
+                    />
+                  );
+                })}
                 {balancesLoading && (
                   <div className="flex items-center gap-2 border-t border-border px-6 py-3 text-xs text-muted-foreground">
                     <Loader2 className="size-3 animate-spin" /> Reading on-chain balances…
@@ -646,6 +786,15 @@ export default function WalletPage() {
       {dialog === "security" && account && (
         <SecurityDialog account={account} onClose={() => setDialog(null)} />
       )}
+      {dialog === "add" && (
+        <AddTokenDialog
+          network={network}
+          onClose={() => {
+            setDialog(null);
+            refreshBalances();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -657,11 +806,13 @@ function TokenRowView({
   name,
   amount,
   usdValue,
+  onRemove,
 }: {
   symbol: string;
   name: string;
   amount: number;
   usdValue: number;
+  onRemove?: () => void;
 }) {
   return (
     <div className="flex items-center justify-between border-b border-border px-6 py-4 last:border-b-0">
@@ -674,12 +825,23 @@ function TokenRowView({
           <p className="text-[11px] text-muted-foreground">{name}</p>
         </div>
       </div>
-      <div className="text-right">
-        <p className="font-mono text-sm">
-          {amount.toLocaleString("en-US", { maximumFractionDigits: 9 })}
-        </p>
-        {usdValue > 0 && (
-          <p className="text-[11px] text-muted-foreground">{usd(usdValue)}</p>
+      <div className="flex items-center gap-3">
+        <div className="text-right">
+          <p className="font-mono text-sm">
+            {amount.toLocaleString("en-US", { maximumFractionDigits: 9 })}
+          </p>
+          {usdValue > 0 && (
+            <p className="text-[11px] text-muted-foreground">{usd(usdValue)}</p>
+          )}
+        </div>
+        {onRemove && (
+          <button
+            onClick={onRemove}
+            aria-label={`Remove ${symbol}`}
+            className="rounded p-1 text-muted-foreground transition-colors hover:text-red-500"
+          >
+            <X className="size-3.5" />
+          </button>
         )}
       </div>
     </div>
@@ -1201,6 +1363,180 @@ function SecurityDialog({ account, onClose }: { account: Account; onClose: () =>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------- portfolio -------------------------------- */
+
+function PortfolioView({
+  rows,
+  failed,
+  loading,
+  prices,
+  onSwitch,
+  onRefresh,
+}: {
+  rows: Array<{
+    network: string;
+    address: string;
+    accountId: string;
+    chainType: string;
+    symbol: string;
+    formatted: string;
+    testnet: boolean;
+  }>;
+  failed: string[];
+  loading: boolean;
+  prices: Record<string, { usd: number; change24h: number }>;
+  onSwitch: (network: string) => void;
+  onRefresh: () => void;
+}) {
+  const totalUsd = rows.reduce(
+    (sum, r) => sum + Number(r.formatted) * (prices[NATIVE_PRICE_IDS[r.network] ?? ""]?.usd ?? 0),
+    0,
+  );
+  const sorted = [...rows].sort((a, b) => {
+    if (a.testnet !== b.testnet) return a.testnet ? 1 : -1;
+    return a.network.localeCompare(b.network);
+  });
+
+  return (
+    <section className="mt-8 overflow-hidden rounded-xl border border-border">
+      <div className="flex flex-wrap items-end justify-between gap-4 px-6 pt-6">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+            All networks — total value
+          </p>
+          <div className="mt-2">
+            {loading ? (
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            ) : (
+              <span className="text-4xl font-semibold tracking-tight">{usd(totalUsd)}</span>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Native balances across {rows.length} account-network pair
+            {rows.length === 1 ? "" : "s"} ·{" "}
+            <button onClick={onRefresh} className="underline-offset-2 hover:underline">
+              refresh
+            </button>
+          </p>
+        </div>
+      </div>
+
+      {failed.length > 0 && (
+        <p className="mx-6 mt-4 flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-[11px] text-muted-foreground">
+          <TriangleAlert className="size-3.5 shrink-0" />
+          Could not read: {failed.map((f) => networkMeta(f)?.label ?? f).join(", ")}
+        </p>
+      )}
+
+      <div className="mt-6">
+        {sorted.length === 0 && !loading ? (
+          <div className="px-6 pb-10 text-center text-sm text-muted-foreground">
+            No balances found yet. Create an account to get started.
+          </div>
+        ) : (
+          sorted.map((r) => {
+            const m = networkMeta(r.network);
+            const p = prices[NATIVE_PRICE_IDS[r.network] ?? ""]?.usd ?? 0;
+            const amount = Number(r.formatted);
+            return (
+              <button
+                key={`${r.network}:${r.address}`}
+                onClick={() => onSwitch(r.network)}
+                className="flex w-full items-center justify-between border-t border-border px-6 py-4 text-left transition-colors hover:bg-muted/50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex size-9 items-center justify-center rounded-full border border-border text-[10px] font-semibold uppercase">
+                    {r.chainType.slice(0, 3)}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">
+                      {m?.label ?? r.network}
+                      {r.testnet && (
+                        <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">
+                          test
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                      {shortenAddress(r.address)}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-mono text-sm">
+                    {amount.toLocaleString("en-US", { maximumFractionDigits: 9 })} {r.symbol}
+                  </p>
+                  {p > 0 && amount > 0 && (
+                    <p className="text-[11px] text-muted-foreground">{usd(amount * p)}</p>
+                  )}
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------ add token --------------------------------- */
+
+function AddTokenDialog({ network, onClose }: { network: string; onClose: () => void }) {
+  const addTokenAction = useAction(api.tokens.addToken);
+  const [contract, setContract] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid = /^0x[0-9a-fA-F]{40}$/.test(contract.trim());
+
+  function submit() {
+    if (!valid) return;
+    setBusy(true);
+    addTokenAction({ network, contract: contract.trim() })
+      .then((r) => {
+        toast.success(`Added ${r.symbol}`, { description: r.name });
+        onClose();
+      })
+      .catch((err: unknown) =>
+        toast.error(err instanceof Error ? err.message : "Could not add token"),
+      )
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add token</DialogTitle>
+          <DialogDescription>
+            Paste an ERC-20 contract address on {networkMeta(network)?.label ?? network}. Freman
+            reads decimals, symbol and name from the chain before saving.
+          </DialogDescription>
+        </DialogHeader>
+        <div>
+          <label className="text-xs text-muted-foreground">Contract address</label>
+          <Input
+            value={contract}
+            onChange={(e) => setContract(e.target.value)}
+            placeholder="0x…"
+            className="mt-1.5 font-mono text-xs"
+          />
+          {contract.length > 0 && !valid && (
+            <p className="mt-1.5 text-xs text-red-500">Invalid contract address.</p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={!valid || busy}>
+            {busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Plus className="mr-2 size-4" />}
+            Add token
           </Button>
         </DialogFooter>
       </DialogContent>

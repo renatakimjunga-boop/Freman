@@ -91,6 +91,20 @@ const schema = defineSchema(
       .index("by_account", ["accountId"])
       .index("by_account_hash", ["accountId", "hash"]),
 
+    // User-added ERC-20 tokens per network, verified on-chain at add time.
+    // Extends the built-in known-token list in the wallet UI.
+    customTokens: defineTable({
+      userId: v.id("users"),
+      network: v.string(), // EVM network id ("mainnet", "base", ...)
+      contract: v.string(), // token contract address
+      symbol: v.string(),
+      name: v.string(),
+      decimals: v.number(),
+      addedAt: v.number(),
+    })
+      .index("by_user", ["userId"])
+      .index("by_user_network", ["userId", "network"]),
+
     // Encrypted master seed for the multi-chain custodial wallet. One per
     // user; all account keys are derived from it and never stored raw.
     walletVaults: defineTable({

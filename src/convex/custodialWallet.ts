@@ -749,10 +749,30 @@ export const getTokenBalances = action({
       return out;
     }
 
-    // EVM: multicall-style reads over the well-known token list.
+    // EVM: multicall-style reads over the well-known token list plus any
+    // tokens the user added to their custom list for this network.
     const evmChain = EVM_CHAINS[network] ?? EVM_CHAINS["sepolia"];
     const provider = await evmProvider(evmChain);
-    const tokens = KNOWN_TOKENS[network] ?? [];
+    const builtin = KNOWN_TOKENS[network] ?? [];
+    let custom: Array<{ symbol: string; name: string; address: string; decimals: number }> = [];
+    {
+      const userId = await getAuthUserId(ctx);
+      if (userId !== null) {
+        const rows = await ctx.runQuery(api.tokenStore.listForNetwork, { network });
+        custom = rows.map((t: { symbol: string; name: string; contract: string; decimals: number }) => ({
+          symbol: t.symbol,
+          name: t.name,
+          address: t.contract,
+          decimals: t.decimals,
+        }));
+      }
+    }
+    // Dedupe custom entries against the built-in list by lowercase address.
+    const builtinSet = new Set(builtin.map((t) => t.address.toLowerCase()));
+    const tokens = [
+      ...builtin,
+      ...custom.filter((t) => !builtinSet.has(t.address.toLowerCase())),
+    ];
     const erc20Abi = [
       "function balanceOf(address owner) view returns (uint256)",
     ] as const;
