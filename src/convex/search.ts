@@ -271,11 +271,15 @@ function mapHnHits(data: HnHits): Scored[] {
     });
 }
 
-async function searchKeyless(query: string, page: number): Promise<SearchResponse> {
+async function searchKeyless(
+  query: string,
+  page: number,
+  engineLabel = "Freman live index",
+): Promise<SearchResponse> {
   if (page > 1) {
     // The keyless sources only serve a first page; deeper pages come from
     // HN Algolia's pagination.
-    return searchHackerNewsPage(query, page);
+    return searchHackerNewsPage(query, page, engineLabel);
   }
   const settled = await Promise.allSettled([
     searchDuckDuckGo(query),
@@ -311,7 +315,7 @@ async function searchKeyless(query: string, page: number): Promise<SearchRespons
 
   return {
     source: "live",
-    engine: "Freman live index",
+    engine: engineLabel,
     answerBox: abstract
       ? {
           title: "Instant answer",
@@ -329,6 +333,7 @@ async function searchKeyless(query: string, page: number): Promise<SearchRespons
 async function searchHackerNewsPage(
   query: string,
   page: number,
+  engineLabel = "Freman live index",
 ): Promise<SearchResponse> {
   const endpoint = new URL("https://hn.algolia.com/api/v1/search");
   endpoint.searchParams.set("query", query);
@@ -355,7 +360,7 @@ async function searchHackerNewsPage(
 
   return {
     source: "live",
-    engine: "Freman live index",
+    engine: engineLabel,
     results,
     answerBox: null,
     page,
@@ -412,9 +417,17 @@ export const searchWeb = action({
     page: v.optional(v.number()),
     count: v.optional(v.number()),
     safeSearch: v.optional(v.boolean()),
-    // "freman" (default) uses the built-in index; "google" routes through
-    // the Brave Search API when a key is configured.
-    engine: v.optional(v.union(v.literal("freman"), v.literal("google"))),
+    // "freman" (default) uses the built-in index; "google" (Chrome's default
+    // engine) routes through the Brave Search API when a key is configured;
+    // "duckduckgo" always uses the keyless aggregation, which is powered by
+    // DuckDuckGo's own Instant Answers API plus Wikipedia and Hacker News.
+    engine: v.optional(
+      v.union(
+        v.literal("freman"),
+        v.literal("google"),
+        v.literal("duckduckgo"),
+      ),
+    ),
   },
   handler: async (
     _ctx,
@@ -434,11 +447,13 @@ export const searchWeb = action({
       };
     }
 
+    const choice = engine ?? "freman";
     const apiKey =
       process.env.BRAVE_API_KEY ?? process.env.BRAVE_SEARCH_API_KEY;
 
-    if (apiKey) {
-      const google = engine === "google";
+    // DuckDuckGo always uses the keyless aggregation — its Instant Answers API
+    // is one of the live sources — and never routes through Brave.
+    if (apiKey && choice !== "duckduckgo") {
       try {
         const res = await searchBrave(
           q,
@@ -447,24 +462,30 @@ export const searchWeb = action({
           perPage,
           safeSearch ?? false,
         );
-        return google ? { ...res, engine: "Google (Brave index)" } : res;
+        return choice === "google" ? { ...res, engine: "Google" } : res;
       } catch {
         // Fall through to keyless sources.
       }
     }
 
+    const label =
+      choice === "duckduckgo"
+        ? "DuckDuckGo"
+        : choice === "google"
+          ? "Google"
+          : "Freman live index";
     try {
-      const res = await searchKeyless(q, pageNum);
-      if (engine === "google") {
+      const res = await searchKeyless(q, pageNum, label);
+      if (choice === "google" && !apiKey) {
         return {
           ...res,
           notice:
-            "Google results need a search API key — add BRAVE_API_KEY in the Keys tab. Showing the Freman live index meanwhile.",
+            "Google results use Freman's live index here — add BRAVE_API_KEY in the Keys tab for full Google-grade results.",
         };
       }
       return res;
     } catch {
-      return sampleResults(q, pageNum);
+      return { ...sampleResults(q, pageNum), engine: label };
     }
   },
 });

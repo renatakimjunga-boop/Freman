@@ -40,7 +40,11 @@ export const update = mutation({
       v.union(v.literal("light"), v.literal("dark"), v.literal("system")),
     ),
     searchEngine: v.optional(
-      v.union(v.literal("freman"), v.literal("google")),
+      v.union(
+        v.literal("freman"),
+        v.literal("google"),
+        v.literal("duckduckgo"),
+      ),
     ),
     searchFilter: v.optional(
       v.union(v.literal("all"), v.literal("web3"), v.literal("docs")),

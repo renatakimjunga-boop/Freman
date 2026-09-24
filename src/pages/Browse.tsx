@@ -84,6 +84,20 @@ const FILTERS = [
 ] as const;
 type FilterId = (typeof FILTERS)[number]["id"];
 
+type EngineId = "freman" | "google" | "duckduckgo";
+
+/** Selectable search engines, shown on the home page and in Settings. */
+const SEARCH_ENGINES: {
+  id: EngineId;
+  label: string;
+  icon: typeof Search;
+  hint: string;
+}[] = [
+  { id: "google", label: "Google", icon: Chrome, hint: "Chrome's default search engine" },
+  { id: "duckduckgo", label: "DuckDuckGo", icon: ShieldCheck, hint: "Privacy-first results" },
+  { id: "freman", label: "Freman", icon: Globe, hint: "Freman's built-in live index" },
+];
+
 function applyFilter(query: string, filter: FilterId): string {
   if (filter === "web3") return `${query} (web3 OR crypto OR blockchain)`;
   if (filter === "docs") {
@@ -443,6 +457,7 @@ export default function Browse() {
     rawQuery: string,
     filter: FilterId,
     page: number,
+    engineOverride?: EngineId,
   ) {
     const query = rawQuery.trim();
     if (!query) return;
@@ -473,7 +488,7 @@ export default function Browse() {
         page,
         count: Number(settings?.resultsPerPage ?? 10),
         safeSearch: settings?.safeSearch ?? false,
-        engine: settings?.searchEngine ?? "freman",
+        engine: engineOverride ?? settings?.searchEngine ?? "freman",
       });
       patchSearch(tabId, entryIndex, {
         status: "done",
@@ -1333,6 +1348,9 @@ export default function Browse() {
             onSearch={runQuery}
             onNavigate={openInTab}
             onOpenSettings={() => pushNav(activeTab.id, { kind: "settings" })}
+            onOpenStore={() => pushNav(activeTab.id, { kind: "store" })}
+            engine={settings?.searchEngine ?? "freman"}
+            onEngineChange={(e) => void updateSettings({ searchEngine: e })}
             userName={user?.name ?? undefined}
             history={history}
             saveHistory={settings?.saveHistory ?? true}
@@ -1422,15 +1440,21 @@ function BrowserHome({
   onSearch,
   onNavigate,
   onOpenSettings,
+  onOpenStore,
+  engine,
+  onEngineChange,
   userName,
   history,
   saveHistory,
   onRemoveHistory,
   onClearHistory,
 }: {
-  onSearch: (query: string) => void;
+  onSearch: (query: string, engine?: EngineId) => void;
   onNavigate: (url: string) => void;
   onOpenSettings: () => void;
+  onOpenStore: () => void;
+  engine: EngineId;
+  onEngineChange: (engine: EngineId) => void;
   userName?: string;
   history: HistoryEntry[];
   saveHistory: boolean;
@@ -1440,31 +1464,79 @@ function BrowserHome({
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
 
+  const active =
+    SEARCH_ENGINES.find((e) => e.id === engine) ?? SEARCH_ENGINES[0];
+  const ActiveIcon = active.icon;
+
+  const shortcuts: { label: string; url: string }[] = [
+    { label: "GitHub", url: "https://github.com" },
+    { label: "Uniswap", url: "https://app.uniswap.org" },
+    { label: "OpenSea", url: "https://opensea.io" },
+    { label: "Etherscan", url: "https://etherscan.io" },
+    { label: "ENS", url: "https://app.ens.domains" },
+    { label: "Aave", url: "https://app.aave.com" },
+    { label: "Chrome Devs", url: "https://developer.chrome.com" },
+  ];
+
   return (
-    <div className="w-full px-4 pb-16 pt-[8vh] sm:px-8 lg:px-14">
+    <div className="mx-auto w-full max-w-3xl px-4 pb-20 pt-[11vh] sm:px-8">
       <div className="text-center">
-        <FremanWordmark className="text-4xl" />
+        <FremanWordmark className="text-5xl" />
         <p className="mt-3 text-sm text-muted-foreground">
           {userName
             ? `Welcome back, ${userName}.`
             : "The web, with Web3 built in."}
         </p>
       </div>
+
+      {/* Search-engine selector */}
+      <div className="mt-9 flex items-center justify-center gap-2">
+        {SEARCH_ENGINES.map((e) => {
+          const Icon = e.icon;
+          const selected = e.id === engine;
+          return (
+            <button
+              key={e.id}
+              type="button"
+              title={e.hint}
+              onClick={() => onEngineChange(e.id)}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                selected
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+              }`}
+            >
+              <Icon className="size-3.5" />
+              {e.label}
+            </button>
+          );
+        })}
+      </div>
+
       <form
-        className="mt-8"
+        className="mt-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (query.trim()) onSearch(query.trim());
+          if (query.trim()) onSearch(query.trim(), engine);
         }}
       >
-        <div className="flex h-14 items-center gap-3 rounded-full border border-border bg-background px-5 transition-colors focus-within:border-foreground/50">
-          <Search className="size-5 text-muted-foreground" />
+        <div className="flex h-14 items-center gap-3 rounded-full border border-border bg-card/50 px-5 shadow-sm transition-colors focus-within:border-primary/60">
+          <ActiveIcon className="size-5 shrink-0 text-muted-foreground" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search the web or type a URL"
+            placeholder={`Search with ${active.label} or type a URL`}
             className="min-w-0 flex-1 bg-transparent font-mono text-base outline-none placeholder:text-muted-foreground/70"
           />
+          <Button
+            type="submit"
+            size="sm"
+            className="shrink-0 rounded-full px-4"
+            disabled={!query.trim()}
+          >
+            <Search className="size-4" />
+            <span className="sr-only">Search</span>
+          </Button>
         </div>
       </form>
 
@@ -1545,60 +1617,68 @@ function BrowserHome({
         </div>
       </div>
 
-      <div className="mt-8">
+      {/* Shortcuts */}
+      <div className="mt-10">
         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Web3 shortcuts
+          Shortcuts
         </p>
-        <div className="mt-3 overflow-hidden rounded-xl border border-border">
-          {DAPPS.slice(0, 4).map((dapp, i) => (
+        <div className="mt-3 grid grid-cols-3 gap-2.5 sm:grid-cols-4">
+          <button
+            onClick={onOpenStore}
+            className="flex flex-col items-center gap-2 rounded-xl border border-border bg-card/40 px-3 py-4 transition-colors hover:border-primary/50 hover:bg-muted/60"
+          >
+            <span className="grid size-11 place-items-center rounded-full bg-primary/10 text-primary">
+              <Store className="size-5" />
+            </span>
+            <span className="w-full truncate text-center text-xs font-medium">
+              Web Store
+            </span>
+          </button>
+          {shortcuts.map((s) => (
             <button
-              key={dapp.origin}
-              className={`flex w-full items-center justify-between px-4 py-3 text-sm transition-colors hover:bg-muted/60 ${
-                i > 0 ? "border-t border-border" : ""
-              }`}
-              onClick={() => onNavigate(`https://${dapp.origin}`)}
+              key={s.url}
+              onClick={() => onNavigate(s.url)}
+              className="flex flex-col items-center gap-2 rounded-xl border border-border bg-card/40 px-3 py-4 transition-colors hover:border-foreground/40 hover:bg-muted/60"
             >
-              <span>{dapp.name}</span>
-              <span className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
-                {dapp.origin}
-                <ExternalLink className="size-3" />
+              <img
+                src={faviconOf(s.url)}
+                alt=""
+                className="size-11 rounded-full bg-muted p-2.5"
+                onError={(e) => {
+                  e.currentTarget.style.visibility = "hidden";
+                }}
+              />
+              <span className="w-full truncate text-center text-xs font-medium">
+                {s.label}
               </span>
             </button>
           ))}
         </div>
       </div>
 
-      <div className="mt-8">
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          Developer
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {[
-            ["Chromium source", "https://chromium.googlesource.com/chromium/src"],
-            [
-              "Chromium docs",
-              "https://chromium.googlesource.com/chromium/src/+/HEAD/docs",
-            ],
-            [
-              "Extension samples",
-              "https://github.com/GoogleChrome/chrome-extensions-samples",
-            ],
-          ].map(([label, href]) => (
-            <button
-              key={href}
-              onClick={() => onNavigate(href)}
-              className="rounded-full border border-border px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
-            >
-              {label}
-            </button>
-          ))}
+      {/* Developer */}
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+        {[
+          ["Chromium source", "https://chromium.googlesource.com/chromium/src"],
+          [
+            "Extension samples",
+            "https://github.com/GoogleChrome/chrome-extensions-samples",
+          ],
+        ].map(([label, href]) => (
           <button
-            onClick={() => navigate("/dashboard")}
+            key={href}
+            onClick={() => onNavigate(href)}
             className="rounded-full border border-border px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
           >
-            Open Studio
+            {label}
           </button>
-        </div>
+        ))}
+        <button
+          onClick={() => navigate("/dashboard")}
+          className="rounded-full border border-border px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+        >
+          Open Studio
+        </button>
       </div>
     </div>
   );
@@ -1615,7 +1695,7 @@ function SettingsPage({
   settings:
     | {
         theme: "light" | "dark" | "system";
-        searchEngine: "freman" | "google";
+        searchEngine: EngineId;
         searchFilter: "all" | "web3" | "docs";
         safeSearch: boolean;
         saveHistory: boolean;
@@ -1626,7 +1706,7 @@ function SettingsPage({
     | undefined;
   onUpdate: (patch: {
     theme?: "light" | "dark" | "system";
-    searchEngine?: "freman" | "google";
+    searchEngine?: EngineId;
     searchFilter?: "all" | "web3" | "docs";
     safeSearch?: boolean;
     saveHistory?: boolean;
@@ -1727,13 +1807,14 @@ function SettingsPage({
         <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
           <Row
             title="Search engine"
-            description="Freman's built-in index, or Google results powered by the Brave Search API."
+            description="Google is Chrome's default engine; DuckDuckGo keeps searches private; Freman uses its own built-in live index."
           >
             <Segmented
               value={settings?.searchEngine ?? "freman"}
               options={[
-                { id: "freman", label: "Freman" },
                 { id: "google", label: "Google" },
+                { id: "duckduckgo", label: "DuckDuckGo" },
+                { id: "freman", label: "Freman" },
               ]}
               onChange={(id) => onUpdate({ searchEngine: id })}
             />
