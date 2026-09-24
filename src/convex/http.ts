@@ -139,6 +139,14 @@ function rewriteHtml(
   // Neutralize meta-refresh redirects (they'd escape the proxy).
   out = out.replace(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*>/gi, "");
 
+  // Meta-tag CSP still applies even with the HTTP header stripped — many
+  // sites declare policy in <meta>, which would otherwise block the proxied
+  // scripts and styles this page needs to render.
+  out = out.replace(
+    /<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*>/gi,
+    "",
+  );
+
   // Inject <base> (so script-computed relative URLs resolve against the real
   // site) and the proxy shim (CORS-safe fetch/XHR, storage fallback, ready
   // ping). If the page has no <head>, prepend right after <html> or at the
@@ -191,7 +199,7 @@ function rewriteCss(css: string, baseUrl: string, proxyOrigin: string): string {
 
   // url(...) for backgrounds, fonts, cursors, etc.
   out = out.replace(
-    /url\(\s*("([^"]*)"|'([^']*)'|([^)'"][^)]*?))\s*\)/gi,
+    /url\(\s*("([^"]*)"|'([^']*)'|([^)'][^)]*?))\s*\)/gi,
     (match, _q, dq: string | undefined, sq: string | undefined, bare: string | undefined) => {
       const target = (dq ?? sq ?? bare ?? "").trim();
       if (
@@ -359,6 +367,8 @@ export const fetchProxy = httpAction(async (ctx, request) => {
   try {
     upstream = await fetch(url, {
       redirect: "follow",
+      // Hard cap so a hung upstream can't hold the HTTP action open forever.
+      signal: AbortSignal.timeout(30_000),
       headers: {
         "User-Agent": mobile ? UA_MOBILE : UA_DESKTOP,
         Accept:

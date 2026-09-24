@@ -302,6 +302,8 @@ export default function Browse() {
   const [findQuery, setFindQuery] = useState("");
   const [now, setNow] = useState(() => new Date());
   const omniboxRef = useRef<HTMLInputElement>(null);
+  /** Bumped on reload so SiteView remounts the iframe and refetches. */
+  const [reloadTick, setReloadTick] = useState(0);
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? tabs[0];
   const current =
@@ -496,6 +498,9 @@ export default function Browse() {
     if (current.kind === "search") {
       void runSearch(activeTab.id, current.query, current.filter, current.page);
     } else if (current.kind === "site") {
+      // Bump the remount counter so the iframe actually refetches — toggling
+      // a loading flag alone never reloaded the page.
+      setReloadTick((n) => n + 1);
       setTabs((ts) =>
         ts.map((t) => (t.id === activeTab.id ? { ...t, loading: true } : t)),
       );
@@ -1277,6 +1282,7 @@ export default function Browse() {
           <SiteView
             url={current.url}
             view={activeTab.view}
+            reloadKey={reloadTick}
             onLoaded={() =>
               setTabs((ts) =>
                 ts.map((t) =>
@@ -1755,10 +1761,12 @@ function SettingsPage({
 function SiteView({
   url,
   view,
+  reloadKey,
   onLoaded,
 }: {
   url: string;
   view: "desktop" | "mobile";
+  reloadKey: number;
   onLoaded: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
@@ -1776,6 +1784,7 @@ function SiteView({
   useEffect(() => {
     setLoaded(false);
     setSlow(false);
+    setBlocked(false);
     setShowChip(true);
     const slowTimer = setTimeout(() => setSlow(true), 6000);
     // Sites whose scripts fight the proxy (consent walls, frame-busters)
@@ -1787,7 +1796,7 @@ function SiteView({
       clearTimeout(slowTimer);
       clearTimeout(blockTimer);
     };
-  }, [url, view, attempt]);
+  }, [url, view, attempt, reloadKey]);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
@@ -1933,6 +1942,39 @@ function SiteView({
       {iframe}
       {proxyChip}
       {slowChip}
+      {blocked && !loaded && (
+        <div className="absolute inset-0 z-10 grid place-items-center bg-background/95 px-6 text-center">
+          <div className="max-w-md">
+            <ShieldCheck className="mx-auto size-8 text-muted-foreground" />
+            <h2 className="mt-4 text-lg font-semibold tracking-tight">
+              {hostOf(url)} won't load in the frame
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              This site's scripts fight embedding. Try again, or open it
+              directly in a new tab.
+            </p>
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <Button
+                variant="outline"
+                className="rounded-full px-5"
+                onClick={() => setAttempt((a) => a + 1)}
+              >
+                <RotateCw className="size-4" />
+                Try again
+              </Button>
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              >
+                Open original
+                <ExternalLink className="size-3.5" />
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
