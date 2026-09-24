@@ -7,8 +7,10 @@ export function useAuth() {
   const user = useQuery(api.users.currentUser);
   const { signIn, signOut } = useAuthActions();
 
-  // Derive isLoading directly from the dependencies instead of managing separate state
-  const isLoading = isAuthLoading || user === undefined;
+  // Only block on the user lookup once auth has succeeded. A logged-out user
+  // should not sit in a permanent loading state while we wait for the current
+  // user query to resolve to null.
+  const isLoading = isAuthLoading || (isAuthenticated && user === undefined);
 
   return {
     isLoading,
