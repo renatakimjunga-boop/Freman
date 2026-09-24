@@ -1765,6 +1765,8 @@ function SiteView({
   const [slow, setSlow] = useState(false);
   const [showChip, setShowChip] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  /** True when the proxied page never proves it rendered (blocked/blank). */
+  const [blocked, setBlocked] = useState(false);
 
   // Pages are fetched through Freman's own proxy, which strips
   // X-Frame-Options / CSP frame-ancestors — so sites can't refuse to load.
@@ -1775,9 +1777,30 @@ function SiteView({
     setLoaded(false);
     setSlow(false);
     setShowChip(true);
-    const timer = setTimeout(() => setSlow(true), 6000);
-    return () => clearTimeout(timer);
+    const slowTimer = setTimeout(() => setSlow(true), 6000);
+    // Sites whose scripts fight the proxy (consent walls, frame-busters)
+    // leave a white frame that still fires onLoad. The injected proxy shim
+    // pings us when a page truly rendered - if it never arrives, show the
+    // recovery panel instead of a silent white void.
+    const blockTimer = setTimeout(() => setBlocked(true), 9000);
+    return () => {
+      clearTimeout(slowTimer);
+      clearTimeout(blockTimer);
+    };
   }, [url, view, attempt]);
+
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if ((e.data as { type?: string } | null)?.type === "freman:proxy-ready") {
+        setBlocked(false);
+        setLoaded(true);
+        onLoaded();
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const iframe = (
     <iframe

@@ -31,6 +31,41 @@ const UA_DESKTOP =
 const UA_MOBILE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
 
+/**
+ * Client shim injected into every proxied page.
+ *
+ * Runs before the site's own scripts and makes embedded browsing viable:
+ *  - routes fetch/XHR/window.open/form posts through /fetchProxy (fixes CORS
+ *    failures that white-screen SPAs like Google/YouTube),
+ *  - provides in-memory localStorage/sessionStorage when the frame is
+ *    sandboxed opaque-origin (sites crash on access otherwise),
+ *  - disables service-worker registration from inside the proxy,
+ *  - pings the parent (freman:proxy-ready) so the viewport can tell a live
+ *    page from a blocked/blank one.
+ */
+const PROXY_SHIM = `<script>(function(){
+try{window.localStorage.getItem}catch(e){
+function mem(){var m={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}},key:function(i){return Object.keys(m)[i]||null},get length(){return Object.keys(m).length}}}
+try{Object.defineProperty(window,'localStorage',{value:mem(),configurable:true})}catch(e2){}
+try{Object.defineProperty(window,'sessionStorage',{value:mem(),configurable:true})}catch(e2){}
+}
+var PROXY=location.origin,BASE=location.href;
+try{var b=document.querySelector('base[href]');if(b)BASE=new URL(b.getAttribute('href'),location.href).href}catch(e){}
+function toProxy(u){try{var abs=new URL(u,BASE);if(abs.protocol!=='http:'&&abs.protocol!=='https:')return null;if(abs.origin===PROXY)return abs.href;return PROXY+'/fetchProxy?url='+encodeURIComponent(abs.href)}catch(e){return null}}
+var of=window.fetch;
+if(of){window.fetch=function(input,init){try{var u=(input&&input.url)?input.url:String(input);var p=toProxy(u);if(p){if(input&&input.url){input=new Request(p,input)}else{input=p}}}catch(e){}return of.call(window,input,init)}}
+var oo=XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open=function(){var a=[].slice.call(arguments);try{var p=toProxy(a[1]);if(p)a[1]=p}catch(e){}return oo.apply(this,a)};
+var ow=window.open;
+window.open=function(u,n,f){try{if(typeof u==='string'){var p=toProxy(u);if(p)u=p}}catch(e){}return ow.call(window,u,n,f)};
+document.addEventListener('submit',function(e){try{var f=e.target,a=f.getAttribute('action');if(a){var p=toProxy(a);if(p)f.setAttribute('action',p)}}catch(e){}},true);
+var os=HTMLFormElement.prototype.submit;
+if(os){HTMLFormElement.prototype.submit=function(){try{var a=this.getAttribute('action');if(a){var p=toProxy(a);if(p)this.setAttribute('action',p)}}catch(e){}return os.apply(this,arguments)}}
+try{if(navigator.serviceWorker){navigator.serviceWorker.register=function(){return new Promise(function(){})}}}catch(e){}
+function ping(){try{parent.postMessage({type:'freman:proxy-ready',base:BASE},'*')}catch(e){}}
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',ping)}else{ping()}
+})();</script>`;
+
 function rewriteHtml(
   html: string,
   baseUrl: string,
@@ -104,12 +139,22 @@ function rewriteHtml(
   // Neutralize meta-refresh redirects (they'd escape the proxy).
   out = out.replace(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*>/gi, "");
 
-  // Open links in the proxy viewport, not a new tab.
-  out = out.replace(/<head([^>]*)>/i, (match, attrsHead: string) =>
-    /<base/i.test(attrsHead)
-      ? match
-      : `${match}\n<base href="${baseUrl}">`,
-  );
+  // Inject <base> (so script-computed relative URLs resolve against the real
+  // site) and the proxy shim (CORS-safe fetch/XHR, storage fallback, ready
+  // ping). If the page has no <head>, prepend right after <html> or at the
+  // very top so the shim still runs before anything else.
+  const escapedBase = baseUrl.replace(/"/g, "&quot;");
+  const headExtras = `<base href="${escapedBase}">\n${PROXY_SHIM}`;
+  let injected = false;
+  out = out.replace(/<head[^>]*>/i, (match) => {
+    injected = true;
+    return `${match}\n${headExtras}`;
+  });
+  if (!injected) {
+    out = /<html[^>]*>/i.test(out)
+      ? out.replace(/<html[^>]*>/i, (match) => `${match}\n${headExtras}`)
+      : `${headExtras}\n${out}`;
+  }
 
   return out;
 }
