@@ -9,7 +9,9 @@ import { mutation, query } from "./_generated/server";
 
 export const DEFAULTS = {
   theme: "dark" as const,
-  searchEngine: "freman" as const,
+  // Chrome's default search experience: Google results are requested through
+  // the server-side search action, with a keyless fallback when necessary.
+  searchEngine: "google" as const,
   searchFilter: "all" as const,
   safeSearch: false,
   saveHistory: true,
@@ -33,7 +35,9 @@ export const get = query({
       .unique();
     return existing ?? DEFAULTS;
   },
-});/** Patch any subset of settings; the row is created on first write. */
+});
+
+/** Patch any subset of settings; the row is created on first write. */
 export const update = mutation({
   args: {
     theme: v.optional(
