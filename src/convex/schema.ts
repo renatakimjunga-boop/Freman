@@ -141,7 +141,11 @@ const schema = defineSchema(
     browserSettings: defineTable({
       userId: v.id("users"),
       theme: v.union(v.literal("light"), v.literal("dark"), v.literal("system")),
-      searchEngine: v.union(v.literal("freman"), v.literal("google")),
+      searchEngine: v.union(
+        v.literal("freman"),
+        v.literal("google"),
+        v.literal("duckduckgo"),
+      ),
       searchFilter: v.union(v.literal("all"), v.literal("web3"), v.literal("docs")),
       safeSearch: v.boolean(),
       saveHistory: v.boolean(),
