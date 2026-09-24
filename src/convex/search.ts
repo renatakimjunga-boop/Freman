@@ -8,7 +8,9 @@ import { action } from "./_generated/server";
  *
  * Priority order:
  *   1. Brave Search API when BRAVE_API_KEY is set (best quality, rate-limited
- *      by the key's plan).
+ *      by the key's plan). Selected when the user picks the "Google" engine;
+ *      Brave powers search results behind the scenes and they are labelled
+ *      accordingly.
  *   2. Keyless live aggregation — DuckDuckGo Instant Answers, Wikipedia and
  *      Hacker News (Algolia), all public official APIs with no key required.
  *      Results are real and merged by heuristic relevance.
@@ -410,10 +412,13 @@ export const searchWeb = action({
     page: v.optional(v.number()),
     count: v.optional(v.number()),
     safeSearch: v.optional(v.boolean()),
+    // "freman" (default) uses the built-in index; "google" routes through
+    // the Brave Search API when a key is configured.
+    engine: v.optional(v.union(v.literal("freman"), v.literal("google"))),
   },
   handler: async (
     _ctx,
-    { query, page, count, safeSearch },
+    { query, page, count, safeSearch, engine },
   ): Promise<SearchResponse> => {
     const q = query.trim();
     const pageNum = Math.max(1, page ?? 1);
@@ -433,15 +438,31 @@ export const searchWeb = action({
       process.env.BRAVE_API_KEY ?? process.env.BRAVE_SEARCH_API_KEY;
 
     if (apiKey) {
+      const google = engine === "google";
       try {
-        return await searchBrave(q, apiKey, pageNum, perPage, safeSearch ?? false);
+        const res = await searchBrave(
+          q,
+          apiKey,
+          pageNum,
+          perPage,
+          safeSearch ?? false,
+        );
+        return google ? { ...res, engine: "Google (Brave index)" } : res;
       } catch {
         // Fall through to keyless sources.
       }
     }
 
     try {
-      return await searchKeyless(q, pageNum);
+      const res = await searchKeyless(q, pageNum);
+      if (engine === "google") {
+        return {
+          ...res,
+          notice:
+            "Google results need a search API key — add BRAVE_API_KEY in the Keys tab. Showing the Freman live index meanwhile.",
+        };
+      }
+      return res;
     } catch {
       return sampleResults(q, pageNum);
     }

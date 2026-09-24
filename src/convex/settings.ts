@@ -9,6 +9,7 @@ import { mutation, query } from "./_generated/server";
 
 export const DEFAULTS = {
   theme: "dark" as const,
+  searchEngine: "freman" as const,
   searchFilter: "all" as const,
   safeSearch: false,
   saveHistory: true,
@@ -32,13 +33,14 @@ export const get = query({
       .unique();
     return existing ?? DEFAULTS;
   },
-});
-
-/** Patch any subset of settings; the row is created on first write. */
+});/** Patch any subset of settings; the row is created on first write. */
 export const update = mutation({
   args: {
     theme: v.optional(
       v.union(v.literal("light"), v.literal("dark"), v.literal("system")),
+    ),
+    searchEngine: v.optional(
+      v.union(v.literal("freman"), v.literal("google")),
     ),
     searchFilter: v.optional(
       v.union(v.literal("all"), v.literal("web3"), v.literal("docs")),

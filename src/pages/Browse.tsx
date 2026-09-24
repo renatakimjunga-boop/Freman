@@ -473,6 +473,7 @@ export default function Browse() {
         page,
         count: Number(settings?.resultsPerPage ?? 10),
         safeSearch: settings?.safeSearch ?? false,
+        engine: settings?.searchEngine ?? "freman",
       });
       patchSearch(tabId, entryIndex, {
         status: "done",
@@ -1614,6 +1615,7 @@ function SettingsPage({
   settings:
     | {
         theme: "light" | "dark" | "system";
+        searchEngine: "freman" | "google";
         searchFilter: "all" | "web3" | "docs";
         safeSearch: boolean;
         saveHistory: boolean;
@@ -1624,6 +1626,7 @@ function SettingsPage({
     | undefined;
   onUpdate: (patch: {
     theme?: "light" | "dark" | "system";
+    searchEngine?: "freman" | "google";
     searchFilter?: "all" | "web3" | "docs";
     safeSearch?: boolean;
     saveHistory?: boolean;
@@ -1722,6 +1725,20 @@ function SettingsPage({
           Search engine
         </p>
         <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
+          <Row
+            title="Search engine"
+            description="Freman's built-in index, or Google results powered by the Brave Search API."
+          >
+            <Segmented
+              value={settings?.searchEngine ?? "freman"}
+              options={[
+                { id: "freman", label: "Freman" },
+                { id: "google", label: "Google" },
+              ]}
+              onChange={(id) => onUpdate({ searchEngine: id })}
+            />
+          </Row>
+
           <Row
             title="Default filter"
             description="Applied to searches started from the home page."
