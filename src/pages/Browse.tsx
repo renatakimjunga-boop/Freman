@@ -309,6 +309,15 @@ export default function Browse() {
   const current =
     activeTab.idx >= 0 ? activeTab.entries[activeTab.idx] : undefined;
 
+  /* ------------------ per-entry scroll restoration ------------------------- */
+
+  /** Scroll offset for each tab history entry, keyed "tabId:entryIndex". */
+  const scrollPositions = useRef(new Map<string, number>());
+  /** Key of the entry currently on screen, so scroll saves land correctly. */
+  const scrollKeyRef = useRef("");
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const activeScrollKey = `${activeId}:${activeTab.idx}`;
+
   /** New tabs open with the user's default device view, once settings arrive. */
   const defaultView = settings?.defaultView ?? "desktop";
   useEffect(() => {
@@ -325,6 +334,35 @@ export default function Browse() {
     setDraft(navDisplay(current));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, activeTab.idx]);
+
+  // Live-save the viewport scroll offset under the active entry's key…
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        scrollPositions.current.set(scrollKeyRef.current, el.scrollTop);
+      });
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  // …and restore it whenever the tab or history position changes, so back,
+  // forward, and tab switches each return to where the user left off.
+  // (Iframe-internal scroll is cross-origin and can't be restored; this
+  // covers everything the browser chrome itself renders.)
+  useEffect(() => {
+    scrollKeyRef.current = activeScrollKey;
+    const el = viewportRef.current;
+    if (el) el.scrollTop = scrollPositions.current.get(activeScrollKey) ?? 0;
+  }, [activeScrollKey]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 15000);
@@ -547,6 +585,10 @@ export default function Browse() {
   }
 
   function closeTab(id: string) {
+    // Drop saved scroll offsets for the closed tab's history entries.
+    for (const key of scrollPositions.current.keys()) {
+      if (key.startsWith(`${id}:`)) scrollPositions.current.delete(key);
+    }
     setTabs((ts) => {
       const remaining = ts.filter((t) => t.id !== id);
       if (remaining.length === 0) {
@@ -692,6 +734,32 @@ export default function Browse() {
     (current?.kind === "search" && current.status === "loading") ||
     (current?.kind === "site" && activeTab.loading);
 
+  /* -------------------------- page-load progress --------------------------- */
+
+  /** Staged load progress: 0 idle, 12→92 while loading, 100 completing. */
+  const [progress, setProgress] = useState(0);
+  const wasLoadingRef = useRef(false);
+  useEffect(() => {
+    const was = wasLoadingRef.current;
+    wasLoadingRef.current = showLoadingBar;
+    if (showLoadingBar) {
+      // Starting (or restarting mid-completion): snap to the first stage and
+      // creep forward, Chrome-style, so slow loads still feel alive.
+      setProgress((p) => (p < 12 || p >= 92 ? 12 : p));
+      const iv = setInterval(() => {
+        setProgress((p) => (p >= 92 ? 92 : p + Math.max((92 - p) * 0.09, 0.5)));
+      }, 200);
+      return () => clearInterval(iv);
+    }
+    if (was && progress > 0) {
+      // Load finished: run the bar to 100%, then fade out and reset.
+      setProgress(100);
+      const t = setTimeout(() => setProgress(0), 400);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLoadingBar]);
+
   const omniboxIcon =
     current?.kind === "site" ? (
       <Lock className="size-3.5 text-muted-foreground" />
@@ -763,7 +831,9 @@ export default function Browse() {
                     : "border-transparent text-muted-foreground hover:bg-card/60"
                 }`}
               >
-                {nav && nav.kind === "site" ? (
+                {tab.loading && nav?.kind === "site" ? (
+                  <RotateCw className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                ) : nav && nav.kind === "site" ? (
                   <img
                     src={faviconOf(nav.url)}
                     alt=""
@@ -1186,12 +1256,17 @@ export default function Browse() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Page-load bar */}
-        {showLoadingBar && (
-          <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden">
-            <div className="freman-loading-bar h-full w-1/3" />
-          </div>
-        )}
+        {/* Page-load progress */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 overflow-hidden">
+          {progress > 0 && (
+            <div
+              className={`h-full bg-primary transition-[width,opacity] duration-300 ease-out ${
+                progress >= 100 ? "opacity-0" : "opacity-100"
+              }`}
+              style={{ width: `${progress}%` }}
+            />
+          )}
+        </div>
       </div>
 
       {/* ── Bookmarks bar ─────────────────────────────────────────────── */}
@@ -1251,7 +1326,7 @@ export default function Browse() {
       )}
 
       {/* ── Viewport ──────────────────────────────────────────────────── */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-background">
+      <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto bg-background">
         {!current || current.kind === "home" ? (
           <BrowserHome
             onSearch={runQuery}

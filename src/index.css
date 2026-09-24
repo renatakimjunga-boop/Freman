@@ -139,20 +139,3 @@
   }
 }
 
-/* Omnibox-style indeterminate page-load bar */
-@keyframes freman-loading {
-  0% {
-    transform: translateX(-120%);
-  }
-  60% {
-    transform: translateX(40%);
-  }
-  100% {
-    transform: translateX(140%);
-  }
-}
-.freman-loading-bar {
-  background: #f42a17;
-  animation: freman-loading 1.1s ease-in-out infinite;
-}
-
